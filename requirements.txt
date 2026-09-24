@@ -1,0 +1,4 @@
+# 技能创建器脚本依赖
+# 安装：pip install -r requirements.txt
+
+requests>=2.28.0
