@@ -1,0 +1,41 @@
+{
+  "skill_name": "skill-creator-pro",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "我想做个技能，帮我整理东西。",
+      "expected_output": "不应该直接开始写SKILL.md，而是先追问澄清问题：整理什么东西？什么时候触发？输出什么格式？",
+      "files": [],
+      "expectations": [
+        "输出中包含至少3个澄清问题，覆盖：技能做什么、什么时候触发、输出格式",
+        "没有直接开始写SKILL.md或初始化目录",
+        "提到了判断是否需要拆分成多个技能"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "帮我做个技能：把用户给的英文句子翻译成中文口语化表达，不要翻译腔。就这么简单，不用问了直接写。",
+      "expected_output": "产出一个结构合规的纯提示词技能：frontmatter有name和description，description是第三人称且写清触发场景，正文有翻译规则，没有占位符。",
+      "files": [],
+      "expectations": [
+        "产出的SKILL.md frontmatter包含name和description两个必需字段",
+        "description用第三人称写，包含触发场景描述",
+        "name是kebab-case格式（小写字母+连字符）",
+        "没有出现TODO/TBD/占位符",
+        "正确判断为纯提示词技能（--capabilities空），没有硬加scripts目录"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "我有个技能叫 pdf-helper，用户说'帮我把PDF里的表格提取出来'它就是不触发，你帮我看看怎么回事。它的description写的是：'PDF工具。'",
+      "expected_output": "诊断出description太短太模糊，没有列出具体触发词和文件类型；给出具体修改建议。",
+      "files": [],
+      "expectations": [
+        "指出description缺少具体触发场景描述",
+        "建议加入具体文件类型（.pdf）和用户原话（提取表格、PDF转Word等）",
+        "建议description用第三人称",
+        "给出修改后的description示例"
+      ]
+    }
+  ]
+}
