@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-LLM 客户端 - 支持五平台原生调用 + OpenAI 兼容 API
+LLM 客户端 - 支持四平台原生调用 + OpenAI 兼容 API
 
 支持的平台：
 1. Claude（原生 claude CLI）- 用 claude -p 调用，trigger 测试最准
 2. OpenAI Codex（原生 codex CLI）
 3. 腾讯 WorkBuddy（原生 workbuddy CLI）
-4. OpenClaw（原生 claw CLI）
+4. OpenClaw（原生 openclaw CLI）
 5. 通用 API 模式（豆包/通义/DeepSeek/Kimi 等 OpenAI 兼容接口）
 
 自动检测当前运行环境，优先用原生 CLI 模式。
@@ -309,6 +309,48 @@ class LLMClient:
         return "YES" in result
 
 
+def _iter_stdout_chunks(process: subprocess.Popen, timeout: float):
+    """
+    跨平台地从子进程 stdout 逐块取数据，直到进程结束或超时。
+
+    原来触发测试用的是 `select.select([process.stdout], ...)` + `os.read`，
+    这在 Windows 上直接不可用——Windows 的 select 只认 socket，传管道会抛 OSError。
+    改成后台线程阻塞读、主线程轮询，Unix 和 Windows 行为一致。
+    """
+    import threading
+    import time as time_mod
+
+    fd = process.stdout.fileno()
+    chunks: list = []
+    finished = threading.Event()
+
+    def _pump():
+        try:
+            while True:
+                chunk = os.read(fd, 8192)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        except OSError:
+            pass  # 进程被杀 / 管道关闭，正常收尾
+        finally:
+            finished.set()
+
+    threading.Thread(target=_pump, daemon=True).start()
+
+    deadline = time_mod.time() + timeout
+    while True:
+        if chunks:
+            yield chunks.pop(0)
+            continue
+        if finished.is_set():
+            return
+        remaining = deadline - time_mod.time()
+        if remaining <= 0:
+            return
+        finished.wait(min(0.1, remaining))
+
+
 class NativeCLIClient:
     """
     原生 CLI 客户端基类 - 用平台自己的 CLI 命令调用模型。
@@ -512,10 +554,16 @@ class ClaudeNativeClient(NativeCLIClient):
         unique_id = uuid.uuid4().hex[:8]
         clean_name = f"{skill_name}-test-{unique_id}"
 
-        # 找项目根目录（找 .claude/ 目录）
+        # 找项目根目录（找 .claude/ 目录），但向上找的边界卡在家目录之前。
+        # 很多人 `~/.claude` 是全局配置，一路找到那里就等于往用户的**全局命令目录**
+        # 写文件、还让嵌套进程以家目录为工作目录——那两件事都不该静默发生。
+        # 项目里没有 `.claude` 就用当前目录兜底，副作用始终留在项目内。
         cwd = Path.cwd()
+        home = Path.home()
         project_root = cwd
         for parent in [cwd, *cwd.parents]:
+            if parent == home:
+                break
             if (parent / ".claude").is_dir():
                 project_root = parent
                 break
@@ -524,10 +572,11 @@ class ClaudeNativeClient(NativeCLIClient):
         commands_dir.mkdir(parents=True, exist_ok=True)
         command_file = commands_dir / f"{clean_name}.md"
 
-        # 明示会动到你项目里的哪个目录，别让它在后台默认发生
+        # 明示会动到哪个目录，别让它在后台默认发生
+        scope = "你的全局命令目录" if project_root == home else "当前项目"
         self._notice_once(
             "claude-project-commands",
-            f"提示：Claude 触发测试会在当前项目里写临时命令文件 {command_file}，跑完即删（进程被强杀可能残留）。",
+            f"提示：Claude 触发测试会在{scope}里写临时命令文件 {command_file}，跑完即删（进程被强杀可能残留）。",
         )
 
         try:
@@ -568,25 +617,10 @@ class ClaudeNativeClient(NativeCLIClient):
             pending_tool_name = None
             accumulated_json = ""
 
-            import select
-            start_time = __import__('time').time()
             timeout = kwargs.get("timeout", 60)
 
             try:
-                while __import__('time').time() - start_time < timeout:
-                    if process.poll() is not None:
-                        remaining = process.stdout.read()
-                        if remaining:
-                            buffer += remaining.decode("utf-8", errors="replace")
-                        break
-
-                    ready, _, _ = select.select([process.stdout], [], [], 1.0)
-                    if not ready:
-                        continue
-
-                    chunk = os.read(process.stdout.fileno(), 8192)
-                    if not chunk:
-                        break
+                for chunk in _iter_stdout_chunks(process, timeout):
                     buffer += chunk.decode("utf-8", errors="replace")
 
                     while "\n" in buffer:
@@ -756,26 +790,10 @@ class WorkBuddyNativeCLIClient(NativeCLIClient):
             triggered = False
             buffer = ""
 
-            import select
-            import time as time_mod
-            start_time = time_mod.time()
             timeout = kwargs.get("timeout", 60)
 
             try:
-                while time_mod.time() - start_time < timeout:
-                    if process.poll() is not None:
-                        remaining = process.stdout.read()
-                        if remaining:
-                            buffer += remaining.decode("utf-8", errors="replace")
-                        break
-
-                    ready, _, _ = select.select([process.stdout], [], [], 1.0)
-                    if not ready:
-                        continue
-
-                    chunk = os.read(process.stdout.fileno(), 8192)
-                    if not chunk:
-                        break
+                for chunk in _iter_stdout_chunks(process, timeout):
                     buffer += chunk.decode("utf-8", errors="replace")
 
                     while "\n" in buffer:
