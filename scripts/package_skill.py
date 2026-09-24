@@ -71,12 +71,14 @@ def package_skill(skill_path, output_dir=None):
 
     # 打包前先跑校验
     print("🔍 正在校验技能...")
-    valid, message = validate_skill(skill_path)
+    valid, messages = validate_skill(skill_path)
+    # validate_skill 返回的是 [(level, text), ...]，逐条渲染——直接把列表塞进 f-string 会甩出一坨 tuple
+    for level, text in messages:
+        print(f"{'❌' if level == 'error' else '⚠️ '} {text}")
     if not valid:
-        print(f"❌ 校验失败：{message}")
         print("   请先修复校验错误再打包。")
         return None
-    print(f"✅ {message}\n")
+    print()
 
     # 确定输出位置
     skill_name = skill_path.name
