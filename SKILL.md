@@ -1,6 +1,6 @@
 ---
 name: skill-creator-pro
-description: 创建新技能、修改和优化已有技能，并严格评估技能效果。当用户想要从零创建一个技能、编辑或优化现有技能、运行测试用例验证技能、对技能表现做基准对比、或优化技能的触发描述以提高触发准确率时使用。专业增强版，支持豆包工作、腾讯 WorkBuddy、OpenAI Codex、Claude、OpenClaw 五种运行环境，自动识别并适配。
+description: 创建新技能、修改和优化已有技能，并严格评估技能效果。当用户想要从零创建一个技能、编辑或优化现有技能、运行测试用例验证技能、对技能表现做基准对比、或优化技能的触发描述以提高触发准确率时使用。专业增强版，支持豆包工作、腾讯 WorkBuddy、千问办公、OpenAI Codex、Claude、OpenClaw 六种运行环境，自动识别并适配。
 license: Apache-2.0，源自 Anthropic 官方 skill-creator（Copyright 2026 Anthropic, PBC）的中文化改造，完整条款与署名见 LICENSE.txt
 compatibility: 需要 Python 3；脚本校验与打包另需 PyYAML 和 requests。主干流程不绑定特定运行时，任何支持 Agent Skills 开放格式的工具均可用；触发率优化另需可编程调用的 agent 运行时，或对话内手动模式。
 metadata:
@@ -23,6 +23,7 @@ metadata:
 |------|---------|---------|---------|
 | **豆包工作** | 有 OrganizerAgent 子任务能力，工作目录在 `.sessions/` 下，有 `present_files` | 主 Agent 自测 + 子任务并行 | 对话内手动，或调 run_loop.py |
 | **腾讯 WorkBuddy** | 有 `workbuddy`/`codebuddy` CLI，或本地 8080 端口 daemon API，frontmatter 带 `agent_created` | CLI 跑测试 + 本地 API | CLI 或通用 API 自动迭代 |
+| **千问办公** | 有 `~/.qwenworkcn/skills/` 目录，钉钉内可唤起，有 Skill 广场 / 专家套件 | 主 Agent 自测（多智能体并行未验证） | 对话内手动 |
 | **OpenAI Codex** | 有 `codex` CLI，用 `AGENTS.md` 配置 | spawn 子进程跑测试 | 调 Codex CLI 自动迭代 |
 | **Claude** | 有 `claude` CLI，看到 `available_skills` 系统提示 | spawn 子进程跑测试 | 调 `claude -p` + run_loop.py |
 | **OpenClaw** | `claw` CLI，有 ClawHub，模型无关，多消息平台接入 | 通用 API + 子代理并行 | 通用 API 优化循环 |
@@ -40,7 +41,7 @@ metadata:
 
 ### 默认落地位置
 
-用本 Skill 创建的新技能，落在**当前环境已确认有效**的 Skill 发现路径下（豆包工作是 `.user_skills/`，Claude 是 `.claude/skills/`，Codex 是项目根或 `~/.codex/`，OpenClaw 是 `~/.claw/skills/`，WorkBuddy 是 SkillHub 对应本地目录）。优先从当前已知的 Skill 路径反推，不要图省事退回到工作目录；用户没明确指定就不要乱换位置。
+用本 Skill 创建的新技能，落在**当前环境已确认有效**的 Skill 发现路径下（豆包工作是 `.user_skills/`，Claude 是 `.claude/skills/`，千问办公是 `~/.qwenworkcn/skills/`，Codex 是项目根或 `~/.codex/`，OpenClaw 是 `~/.claw/skills/`，WorkBuddy 是 SkillHub 对应本地目录）。优先从当前已知的 Skill 路径反推，不要图省事退回到工作目录；用户没明确指定就不要乱换位置。
 
 ### 网页采集类技能默认走浏览器
 
@@ -66,6 +67,7 @@ metadata:
 |---|---|
 | 豆包工作 | [doubao-work.md](references/platforms/doubao-work.md) |
 | 腾讯 WorkBuddy / QClaw（含企业版 manifest.yaml） | [workbuddy.md](references/platforms/workbuddy.md) |
+| 千问办公（QwenWork） | [qwenwork.md](references/platforms/qwenwork.md) |
 | OpenAI Codex | [codex.md](references/platforms/codex.md) |
 | Claude Code / Cowork / Claude.ai | [claude.md](references/platforms/claude.md) |
 | OpenClaw | [openclaw.md](references/platforms/openclaw.md) |
@@ -137,8 +139,8 @@ python3 -m scripts.init_skill <skill-name> --path <已确认的 .user_skills 目
 - **compatibility**：需要的工具、依赖、支持的文件格式、行数/大小上限（可选，但工具类技能建议写）。比如"需要 Python 3 + openpyxl，支持 .xlsx/.xls，上限 10 万行"。
 - **平台专属字段**（根据目标平台加）：
   - WorkBuddy 要加：`version`、`category`、`platforms`、`agent_created: true`
-  - Claude 要加：`allowed-tools`（如果需要限定工具）
-  - 其他平台按各自规范加
+  - 千问办公要加：`name_en`/`name_zh`、`description_en`/`description_zh`、`argument-hint`(-en/-zh)、`user-invocable`，并**必须同时产出 `.skill-metadata.yaml`**，缺了 UI 只会给用户一句通用 query
+  - Claude 要加：`allowed-tools`（如果需要限定工具）；其他平台按各自规范加
 - **正文**：技能的具体指令和流程
 
 ### 技能写作指南
@@ -179,10 +181,8 @@ python3 -m scripts.init_skill <skill-name> --path <已确认的 .user_skills 目
 2. **SKILL.md 正文**——技能触发时才加载（理想 < 500 行）
 3. **附属资源**——需要时才加载（无限制，脚本甚至可以不用加载就直接执行）
 
-这些字数只是大概参考，内容需要的话可以适当长一点。
-
 **关键原则：**
-- SKILL.md 控制在 500 行以内；快到上限了，就把内容拆到下一层级，写清楚指引说"遇到 XX 情况去读 XX 文件"
+- SKILL.md 控制在 500 行以内（这些字数只是大概参考，内容需要可以适当长一点）；快到上限了，就把内容拆到下一层级，写清楚指引说"遇到 XX 情况去读 XX 文件"
 - 在 SKILL.md 里明确标注什么时候该去读哪个参考文件
 - 大的参考文件（>300 行）最好带个目录
 

@@ -2,12 +2,13 @@
 """
 平台检测模块 - 自动识别当前运行在哪个 AI 平台环境里
 
-支持五个平台：
+支持以下平台：
 - claude: Claude Code / Cowork（有 claude CLI）
 - codex: OpenAI Codex（有 codex CLI）
 - workbuddy: 腾讯 WorkBuddy / CodeBuddy（有 workbuddy / codebuddy CLI）
 - openclaw: OpenClaw 开源框架（有 claw CLI）
 - doubao: 豆包工作（.sessions/ 工作目录）
+- qwenwork: 千问办公（只有弱信号，见 detect_platform 里的说明）
 - generic: 通用 API 模式（以上都不是）
 """
 
@@ -26,6 +27,7 @@ def detect_platform() -> str:
         "workbuddy"  - 腾讯 WorkBuddy / CodeBuddy
         "openclaw"   - OpenClaw
         "doubao"     - 豆包工作
+        "qwenwork"   - 千问办公（弱信号，见下）
         "generic"    - 通用 API 模式（默认）
     """
     # 优先级从高到低，先检测最特殊的
@@ -53,7 +55,13 @@ def detect_platform() -> str:
     if shutil.which("claw"):
         return "openclaw"
 
-    # 5. 默认通用模式
+    # 5. 千问办公：只有弱信号（技能目录是它唯一有文档依据的本地痕迹）。
+    #    官方没有公布可用的环境变量或 CLI，所以这里只在前面的信号都没命中时兜底，
+    #    命中也可能只是"装了千问办公桌面端"而已——拿不准就回头问用户。
+    if (Path.home() / ".qwenworkcn").is_dir():
+        return "qwenwork"
+
+    # 6. 默认通用模式
     return "generic"
 
 
@@ -99,6 +107,12 @@ def get_platform_info() -> dict:
             "cli_command": None,
             "has_native_eval": False,
             "description": "豆包 Agent 工作环境，主 Agent 自测模式",
+        },
+        "qwenwork": {
+            "name": "千问办公",
+            "cli_command": None,
+            "has_native_eval": False,
+            "description": "阿里千问办公（QwenWork），原生支持 SKILL.md，触发测试走对话内手动模式",
         },
         "generic": {
             "name": "通用 API 模式",
