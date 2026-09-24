@@ -23,7 +23,7 @@ EXCLUDE_DIRS = {"__pycache__", "node_modules"}
 EXCLUDE_GLOBS = {"*.pyc"}
 EXCLUDE_FILES = {".DS_Store"}
 # 只在技能根目录排除的目录（深层嵌套的不算）
-ROOT_EXCLUDE_DIRS = {"evals"}
+ROOT_EXCLUDE_DIRS = {"evals", "tests"}
 
 
 def should_exclude(rel_path: Path) -> bool:
