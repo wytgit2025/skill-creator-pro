@@ -56,6 +56,8 @@ def run_loop(
     verbose: bool = False,
     live_report_path: Path | None = None,
     log_dir: Path | None = None,
+    allow_auto_approve: bool | None = None,
+    allow_nested_claude: bool | None = None,
 ) -> dict:
     """运行评估 + 改进循环。"""
     name, original_description, content = parse_skill_md(skill_path)
@@ -90,6 +92,8 @@ def run_loop(
             model=model,
             runs_per_query=runs_per_query,
             trigger_threshold=trigger_threshold,
+            allow_auto_approve=allow_auto_approve,
+            allow_nested_claude=allow_nested_claude,
         )
         eval_elapsed = time.time() - t0
 
@@ -196,6 +200,8 @@ def run_loop(
             model=model,
             log_dir=log_dir,
             iteration=iteration,
+            allow_auto_approve=allow_auto_approve,
+            allow_nested_claude=allow_nested_claude,
         )
         improve_elapsed = time.time() - t0
 
@@ -304,6 +310,8 @@ def main():
         holdout=args.holdout,
         model=args.model,
         verbose=args.verbose,
+        allow_auto_approve=args.allow_auto_approve,
+        allow_nested_claude=args.allow_nested_claude,
         live_report_path=live_report_path,
         log_dir=log_dir,
     )

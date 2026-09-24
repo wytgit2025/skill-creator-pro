@@ -27,6 +27,8 @@ def run_single_query(
     skill_description: str,
     timeout: int,
     model: str | None = None,
+    allow_auto_approve: bool | None = None,
+    allow_nested_claude: bool | None = None,
 ) -> bool:
     """
     运行单个查询，返回是否触发了技能。
@@ -41,6 +43,8 @@ def run_single_query(
         FakeArgs.api_key = os.environ.get("OPENAI_API_KEY")
         FakeArgs.base_url = os.environ.get("OPENAI_BASE_URL")
         FakeArgs.model = model
+        FakeArgs.allow_auto_approve = allow_auto_approve
+        FakeArgs.allow_nested_claude = allow_nested_claude
 
         client = build_client_from_args(FakeArgs())
         # 触发测试：原生 CLI 模式会用真实验证，通用模式用 function calling 模拟
@@ -60,6 +64,8 @@ def run_eval(
     model: str | None = None,
     runs_per_query: int = 1,
     trigger_threshold: float = 0.5,
+    allow_auto_approve: bool | None = None,
+    allow_nested_claude: bool | None = None,
 ) -> dict:
     """运行完整的测试集并返回结果。"""
     results = []
@@ -75,6 +81,8 @@ def run_eval(
                     description,
                     timeout,
                     model,
+                    allow_auto_approve,
+                    allow_nested_claude,
                 )
                 future_to_info[future] = (item, run_idx)
 
@@ -165,6 +173,8 @@ def main():
         model=args.model,
         runs_per_query=args.runs_per_query,
         trigger_threshold=args.trigger_threshold,
+        allow_auto_approve=args.allow_auto_approve,
+        allow_nested_claude=args.allow_nested_claude,
     )
 
     if args.verbose:

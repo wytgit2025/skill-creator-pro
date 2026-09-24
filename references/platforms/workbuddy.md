@@ -72,6 +72,11 @@ author: enterprise-admin
 - **触发测试方式：原生端到端检测**——和 Claude 一样，往 `~/.codebuddy/commands/` 里放临时命令文件，然后用 `codebuddy -p --output-format stream-json` 跑查询，检测模型有没有真的调用这个技能
 - 准确率：95%+，和 Claude 同级
 
+## 触发测试的权限边界
+- 会往**用户全局命令目录**写临时文件 `~/.codebuddy/commands/<技能>-test-<id>.md`（跑完即删，进程被强杀可能残留）
+- 嵌套 `codebuddy -p` 的工作目录是新建的临时目录（`tempfile.mkdtemp(prefix="skill-creator-trigger-")`），跑完删除——**不要**让它落在用户家目录
+- `-y`（自动确认）**默认不加**。加了（`--allow-auto-approve` 或 `SKILL_CREATOR_ALLOW_AUTO_APPROVE=1`）等于关掉该子进程的确认提示、它可以不经确认执行工具，**必须先跟用户讲明并拿到同意**
+
 ## 交付
 - 个人版：打包成文件夹，用户导入到 WorkBuddy SkillHub
 - 企业版：按上面的结构打 ZIP，上传到企业控制台的"AI 资源管理 > Skill 管理"

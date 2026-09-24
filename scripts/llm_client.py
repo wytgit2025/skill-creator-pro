@@ -20,12 +20,19 @@ LLM 客户端 - 支持五平台原生调用 + OpenAI 兼容 API
 
 import os
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 import requests
 from typing import Optional
 
 from scripts.platform_detect import detect_platform
+
+
+def _env_flag(name: str) -> bool:
+    """读布尔型环境变量（1/true/yes 都算开）。"""
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
 
 
 class LLMClient:
@@ -307,12 +314,68 @@ class NativeCLIClient:
     原生 CLI 客户端基类 - 用平台自己的 CLI 命令调用模型。
 
     比通用 API 模式更准确，因为用的是平台原生的技能加载和触发机制。
+
+    嵌套调用会扩大权限边界，下面两个开关默认都是关的，必须由用户显式打开：
+    - `allow_auto_approve`：是否给子进程加自动确认参数（如 codebuddy 的 `-y`）
+    - `allow_nested_claude`：是否剔除 CLAUDECODE，以在 Claude Code 内部嵌套调用
+
+    对应环境变量：`SKILL_CREATOR_ALLOW_AUTO_APPROVE`、`SKILL_CREATOR_ALLOW_NESTED_CLAUDE`。
     """
 
-    def __init__(self, cli_command: str, model: Optional[str] = None):
+    def __init__(
+        self,
+        cli_command: str,
+        model: Optional[str] = None,
+        allow_auto_approve: Optional[bool] = None,
+        allow_nested_claude: Optional[bool] = None,
+    ):
         self.cli_command = cli_command
         self.model = model
         self.platform = "unknown"
+        self.allow_auto_approve = (
+            allow_auto_approve if allow_auto_approve is not None
+            else _env_flag("SKILL_CREATOR_ALLOW_AUTO_APPROVE")
+        )
+        self.allow_nested_claude = (
+            allow_nested_claude if allow_nested_claude is not None
+            else _env_flag("SKILL_CREATOR_ALLOW_NESTED_CLAUDE")
+        )
+        self._notices: set = set()
+
+    def _notice_once(self, key: str, message: str) -> None:
+        """同一类提示只打一次，避免并行 worker 里刷屏。"""
+        if key not in self._notices:
+            self._notices.add(key)
+            print(message, file=sys.stderr)
+
+    def _nested_env(self) -> dict:
+        """构造子进程的环境变量。
+
+        CLAUDECODE 是宿主（Claude Code）的递归护栏标记，默认原样传给子进程。
+        静默剔除它等于让嵌套调用绕过宿主限制，必须由用户显式同意。
+        """
+        if not self.allow_nested_claude:
+            return dict(os.environ)
+        self._notice_once(
+            "nested-claude",
+            "⚠️ 已启用 --allow-nested-claude：这次嵌套调用剔除了 CLAUDECODE，绕过了宿主递归护栏",
+        )
+        return {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+
+    def _auto_approve_args(self) -> list:
+        """返回自动确认参数。默认不加，并在首次跳过时说明后果。"""
+        if self.allow_auto_approve:
+            self._notice_once(
+                "auto-approve-on",
+                "⚠️ 已启用 --allow-auto-approve：嵌套 CLI 的确认提示被关闭，该子进程可以不经确认执行工具",
+            )
+            return ["-y"]
+        self._notice_once(
+            "auto-approve-off",
+            "提示：未开启自动确认（-y）。若嵌套 CLI 因此停下来等确认，本次触发判定会失败。"
+            "确需开启请加 --allow-auto-approve，并知悉它会关闭该子进程的确认提示。",
+        )
+        return []
 
     def chat(self, messages: list[dict], **kwargs) -> dict:
         """调用 CLI，返回统一格式的响应。"""
@@ -383,8 +446,18 @@ class NativeCLIClient:
 class ClaudeNativeClient(NativeCLIClient):
     """Claude Code 原生客户端 - 用 claude -p 调用。"""
 
-    def __init__(self, model: Optional[str] = None):
-        super().__init__(cli_command="claude", model=model)
+    def __init__(
+        self,
+        model: Optional[str] = None,
+        allow_auto_approve: Optional[bool] = None,
+        allow_nested_claude: Optional[bool] = None,
+    ):
+        super().__init__(
+            cli_command="claude",
+            model=model,
+            allow_auto_approve=allow_auto_approve,
+            allow_nested_claude=allow_nested_claude,
+        )
         self.platform = "claude"
 
     def _call_cli(self, prompt: str) -> str:
@@ -393,8 +466,7 @@ class ClaudeNativeClient(NativeCLIClient):
         if self.model:
             cmd.extend(["--model", self.model])
 
-        # 去掉 CLAUDECODE 环境变量，允许嵌套调用
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+        env = self._nested_env()
 
         result = subprocess.run(
             cmd,
@@ -425,6 +497,18 @@ class ClaudeNativeClient(NativeCLIClient):
         import uuid
         from pathlib import Path
 
+        # 在 Claude Code 里跑嵌套调用会撞上宿主的递归护栏（CLAUDECODE）。
+        # 默认不静默绕开它——需要用户显式同意，否则明说这次没跑，而不是假装"没触发"。
+        if "CLAUDECODE" in os.environ and not self.allow_nested_claude:
+            print(
+                "❌ 触发测试需要嵌套调用 `claude -p`，但当前进程在 Claude Code 内运行。\n"
+                "   去掉 CLAUDECODE 才能嵌套，那会绕过宿主的递归护栏，所以默认不做。\n"
+                "   同意的话加参数 --allow-nested-claude（或设 SKILL_CREATOR_ALLOW_NESTED_CLAUDE=1）后重跑。\n"
+                "   注意：本条的判定结果不可信（不是「没触发」，是压根没跑成），请勿据此改 description。",
+                file=sys.stderr,
+            )
+            return False
+
         unique_id = uuid.uuid4().hex[:8]
         clean_name = f"{skill_name}-test-{unique_id}"
 
@@ -439,6 +523,12 @@ class ClaudeNativeClient(NativeCLIClient):
         commands_dir = project_root / ".claude" / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
         command_file = commands_dir / f"{clean_name}.md"
+
+        # 明示会动到你项目里的哪个目录，别让它在后台默认发生
+        self._notice_once(
+            "claude-project-commands",
+            f"提示：Claude 触发测试会在当前项目里写临时命令文件 {command_file}，跑完即删（进程被强杀可能残留）。",
+        )
 
         try:
             # 写一个临时 command 文件
@@ -463,7 +553,7 @@ class ClaudeNativeClient(NativeCLIClient):
             if self.model:
                 cmd.extend(["--model", self.model])
 
-            env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+            env = self._nested_env()
 
             process = subprocess.Popen(
                 cmd,
@@ -565,15 +655,24 @@ class WorkBuddyNativeCLIClient(NativeCLIClient):
     然后真的让模型在技能列表里选，检测触发行为。
     """
 
-    def __init__(self, model: Optional[str] = None):
-        import shutil
+    def __init__(
+        self,
+        model: Optional[str] = None,
+        allow_auto_approve: Optional[bool] = None,
+        allow_nested_claude: Optional[bool] = None,
+    ):
         cli = shutil.which("workbuddy") or shutil.which("codebuddy") or "codebuddy"
-        super().__init__(cli_command=cli, model=model)
+        super().__init__(
+            cli_command=cli,
+            model=model,
+            allow_auto_approve=allow_auto_approve,
+            allow_nested_claude=allow_nested_claude,
+        )
         self.platform = "workbuddy"
 
     def _call_cli(self, prompt: str) -> str:
         """调用 codebuddy -p 执行单次查询。"""
-        cmd = [self.cli_command, "-p", prompt, "-y"]
+        cmd = [self.cli_command, "-p", prompt, *self._auto_approve_args()]
         if self.model:
             cmd.extend(["--model", self.model])
 
@@ -613,6 +712,16 @@ class WorkBuddyNativeCLIClient(NativeCLIClient):
         commands_dir.mkdir(parents=True, exist_ok=True)
         command_file = commands_dir / f"{clean_name}.md"
 
+        # 嵌套进程的工作目录放在临时目录里，别让相对路径落到用户家目录
+        run_dir = tempfile.mkdtemp(prefix="skill-creator-trigger-")
+
+        # 明示会动到你机器上的哪个位置
+        self._notice_once(
+            "codebuddy-commands",
+            f"提示：WorkBuddy 触发测试会在你的全局命令目录写临时文件 {command_file}，"
+            f"跑完即删（进程被强杀可能残留）；嵌套进程工作目录为临时目录 {run_dir}。",
+        )
+
         try:
             # 写一个临时 command 文件
             indented_desc = "\n  ".join(skill_description.split("\n"))
@@ -632,7 +741,7 @@ class WorkBuddyNativeCLIClient(NativeCLIClient):
                 "-p", user_query,
                 "--output-format", "stream-json",
                 "--verbose",
-                "-y",
+                *self._auto_approve_args(),
             ]
             if self.model:
                 cmd.extend(["--model", self.model])
@@ -641,7 +750,7 @@ class WorkBuddyNativeCLIClient(NativeCLIClient):
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                cwd=home,
+                cwd=run_dir,
             )
 
             triggered = False
@@ -700,6 +809,7 @@ class WorkBuddyNativeCLIClient(NativeCLIClient):
         finally:
             if command_file.exists():
                 command_file.unlink()
+            shutil.rmtree(run_dir, ignore_errors=True)
 
 
 class CodexNativeCLIClient(NativeCLIClient):
@@ -885,6 +995,20 @@ class GenericNativeCLIClient(NativeCLIClient):
         return result.stdout
 
 
+def _explicit_flag(args, name: str) -> Optional[bool]:
+    """只在用户显式传了开关时返回 True，否则返回 None 让客户端去读环境变量。"""
+    return True if getattr(args, name, False) else None
+
+
+def _print_spawn_boundary(client) -> None:
+    """把嵌套子进程的权限边界明示出来，不让它在后台默认发生。"""
+    if not isinstance(client, NativeCLIClient):
+        return
+    auto = "开（该子进程的确认提示被关闭）" if client.allow_auto_approve else "关"
+    nested = "开（已绕过宿主递归护栏）" if client.allow_nested_claude else "关"
+    print(f"嵌套子进程权限边界：自动确认={auto} / 剔除 CLAUDECODE={nested}", file=sys.stderr)
+
+
 def build_client_from_args(args):
     """
     从命令行参数构建 LLM 客户端。
@@ -902,34 +1026,41 @@ def build_client_from_args(args):
     # 自动检测平台
     platform = detect_platform()
     model = getattr(args, "model", None)
+    spawn_flags = {
+        "allow_auto_approve": _explicit_flag(args, "allow_auto_approve"),
+        "allow_nested_claude": _explicit_flag(args, "allow_nested_claude"),
+    }
 
     print(f"检测到运行平台：{platform}", file=sys.stderr)
 
     # 根据平台选择原生客户端
     if platform == "claude":
         print("使用 Claude 原生 CLI 模式", file=sys.stderr)
-        return ClaudeNativeClient(model=model)
+        client = ClaudeNativeClient(model=model, **spawn_flags)
 
     elif platform == "codex":
         print("使用 Codex 原生 CLI 模式", file=sys.stderr)
-        return CodexNativeCLIClient(model=model)
+        client = CodexNativeCLIClient(model=model)
 
     elif platform == "workbuddy":
         print("使用 WorkBuddy 原生 CLI 模式", file=sys.stderr)
-        return WorkBuddyNativeCLIClient(model=model)
+        client = WorkBuddyNativeCLIClient(model=model, **spawn_flags)
 
     elif platform == "openclaw":
         print("使用 OpenClaw 原生 CLI 模式", file=sys.stderr)
-        return OpenClawNativeCLIClient(model=model)
+        client = OpenClawNativeCLIClient(model=model)
 
     # 豆包工作和其他默认走通用 API 模式
     else:
         print("使用通用 OpenAI 兼容 API 模式", file=sys.stderr)
-        return LLMClient(
+        client = LLMClient(
             api_key=os.environ.get("OPENAI_API_KEY", ""),
             base_url=getattr(args, "base_url", None),
             model=model,
         )
+
+    _print_spawn_boundary(client)
+    return client
 
 
 def add_common_args(parser):
@@ -937,4 +1068,14 @@ def add_common_args(parser):
     parser.add_argument("--api-key", default=None, help="API Key（也可用环境变量 OPENAI_API_KEY）")
     parser.add_argument("--base-url", default=None, help="API Base URL（也可用环境变量 OPENAI_BASE_URL）")
     parser.add_argument("--model", default=None, help="模型名称（也可用环境变量 OPENAI_MODEL）")
+    parser.add_argument(
+        "--allow-auto-approve",
+        action="store_true",
+        help="允许嵌套 CLI 关闭确认提示（如 codebuddy 的 -y）。默认关闭：开了等于让该子进程不经确认执行工具",
+    )
+    parser.add_argument(
+        "--allow-nested-claude",
+        action="store_true",
+        help="允许剔除 CLAUDECODE，以在 Claude Code 内部嵌套调用。默认关闭：开了等于绕过宿主递归护栏",
+    )
     return parser

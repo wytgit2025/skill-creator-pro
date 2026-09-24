@@ -85,6 +85,18 @@ python -m scripts.run_loop \
 
 **用当前会话的模型 ID**（从系统提示里拿）——这样触发测试的结果和用户实际体验一致。
 
+**跑之前必须先跟用户讲清楚：这个脚本会在他的机器上起嵌套子进程。** 边界如下，两个开关默认都是关的，脚本在首次生效时会往 stderr 打一条明示提示：
+
+| 项 | 默认行为 |
+|---|---|
+| 子进程 | 用平台原生 CLI（`claude -p`、`codebuddy -p` 等）逐条跑测试 query。子进程的提示词里含**技能 description**，而外部来源的技能 description 属于不可信文本——嵌套 agent 会读到它 |
+| 自动确认（`-y`） | **默认不加**。只有显式给 `--allow-auto-approve`（或 `SKILL_CREATOR_ALLOW_AUTO_APPROVE=1`）才加，加了等于关掉该子进程的确认提示、它可以不经确认执行工具 |
+| 宿主递归护栏 | **默认保留** `CLAUDECODE`。只给 `--allow-nested-claude`（或 `SKILL_CREATOR_ALLOW_NESTED_CLAUDE=1`）时才剔除，那等于绕过 Claude Code 的递归护栏 |
+| 工作目录 | Claude 用项目根（要找 `.claude/commands`）；WorkBuddy 用新建的临时目录（`tempfile.mkdtemp`），跑完删除 |
+| 落盘文件 | Claude 写 `<项目根>/.claude/commands/<技能>-test-<id>.md`；WorkBuddy 写 `~/.codebuddy/commands/<技能>-test-<id>.md`。都是临时文件，跑完即删（进程被强杀可能残留） |
+
+**要开这两个开关就得先拿到用户同意**，别自己默默加上。另外，没开启自动确认时嵌套 CLI 可能停下来等确认，导致本次触发判定失真——出现这种情况要如实说明是"没跑成"，不能当成"没触发"。
+
 **脚本内部做了什么：**
 - 把 eval 集按 60% train / 40% held-out test 分割
 - 评估当前描述（每个 query 跑 3 次，取可靠的触发率）

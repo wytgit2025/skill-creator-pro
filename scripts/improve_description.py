@@ -26,6 +26,8 @@ def improve_description(
     model: str | None = None,
     log_dir: Path | None = None,
     iteration: int | None = None,
+    allow_auto_approve: bool | None = None,
+    allow_nested_claude: bool | None = None,
 ) -> str:
     """调用 LLM 并根据评估结果改进描述。"""
     failed_triggers = [
@@ -108,7 +110,11 @@ def improve_description(
     class FakeArgs:
         api_key = None
         base_url = None
-        model = model
+
+    # 类体里写 `model = model` 会 NameError——类体读不到外层函数作用域，只能在定义之后赋值
+    FakeArgs.model = model
+    FakeArgs.allow_auto_approve = allow_auto_approve
+    FakeArgs.allow_nested_claude = allow_nested_claude
 
     client = build_client_from_args(FakeArgs())
     text = client.chat_text([{"role": "user", "content": prompt}], temperature=0.7, max_tokens=1024)
@@ -194,6 +200,8 @@ def main():
         eval_results=eval_results,
         history=history,
         model=args.model,
+        allow_auto_approve=args.allow_auto_approve,
+        allow_nested_claude=args.allow_nested_claude,
     )
 
     if args.verbose:
