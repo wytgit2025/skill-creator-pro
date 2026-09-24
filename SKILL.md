@@ -1,8 +1,8 @@
 ---
 name: skill-creator-pro
 description: 创建新技能、修改和优化已有技能，并严格评估技能效果。当用户想要从零创建一个技能、编辑或优化现有技能、运行测试用例验证技能、对技能表现做基准对比、或优化技能的触发描述以提高触发准确率时使用。专业增强版，支持豆包工作、腾讯 WorkBuddy、OpenAI Codex、Claude、OpenClaw 五种运行环境，自动识别并适配。
-license: MIT，完整条款见 LICENSE.txt
-compatibility: 需要 Python 3；脚本校验与打包另需 PyYAML 和 requests。主干流程不绑定特定运行时，任何支持 Agent Skills 开放格式的工具均可用；触发率优化另需可编程调用的 agent 运行时，或豆包工作对话内手动模式。
+license: Apache-2.0，源自 Anthropic 官方 skill-creator（Copyright 2026 Anthropic, PBC）的中文化改造，完整条款与署名见 LICENSE.txt
+compatibility: 需要 Python 3；脚本校验与打包另需 PyYAML 和 requests。主干流程不绑定特定运行时，任何支持 Agent Skills 开放格式的工具均可用；触发率优化另需可编程调用的 agent 运行时，或对话内手动模式。
 metadata:
   version: "2.1.0"
 ---
@@ -117,8 +117,10 @@ metadata:
 **先初始化骨架（推荐）**：从零建新技能时，先跑 `scripts/init_skill.py` 一键生成目录和模板：
 
 ```bash
-python3 scripts/init_skill.py <skill-name> --path <已确认的 .user_skills 目录>
+python3 -m scripts.init_skill <skill-name> --path <已确认的 .user_skills 目录>
 ```
+
+> **脚本调用方式**：本 Skill 的脚本是一个 Python 包，统一用 `python3 -m scripts.<脚本名>` 调用，**工作目录必须是技能创建器根目录**。直接写 `python scripts/xxx.py` 会因为包内导入失败报 `ModuleNotFoundError`。
 
 它会自动建出 `SKILL.md`（带 TODO 占位符和结构选择建议）以及 `scripts/`、`references/`、`assets/`、`evals/`、`examples/` 五个目录。生成后再按下面的内容填充。如果只是在已有技能上迭代，可以跳过这一步。
 
@@ -244,7 +246,7 @@ cloud-deploy/
 }
 ```
 
-完整 schema 见 `references/schemas.md`（后面会加 `assertions` 字段）。
+完整 schema 见 `references/schemas.md`。断言字段名统一用 `expectations`（跑测试时再补，别用 `assertions`）。
 
 ---
 
@@ -291,7 +293,7 @@ cloud-deploy/
   "eval_id": 0,
   "eval_name": "描述性-名字-这里放测试什么",
   "prompt": "用户的任务提示词",
-  "assertions": []
+  "expectations": []
 }
 ```
 
@@ -477,8 +479,8 @@ python -m scripts.package_skill <技能文件夹路径>
 5. 跑两遍校验——先语法，再内容：
 
    ```bash
-   python scripts/quick_validate.py <技能文件夹路径>          # 语法层
-   python scripts/quick_validate.py <技能文件夹路径> --deep     # 内容层：行数/触发词/examples/evals/嵌套引用
+   python -m scripts.quick_validate <技能文件夹路径>          # 语法层
+   python -m scripts.quick_validate <技能文件夹路径> --deep   # 内容层：行数/触发词/examples/evals/嵌套引用
    ```
    deep 模式报的 warning 不阻断，但每条都要看一眼再决定要不要修。
 

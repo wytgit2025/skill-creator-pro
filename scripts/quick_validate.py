@@ -2,9 +2,9 @@
 """
 技能快速校验脚本
 
-用法：
-    python quick_validate.py <技能目录>            # 只做语法/格式校验
-    python quick_validate.py <技能目录> --deep     # 额外做内容层检查（行数、触发词、examples、evals）
+用法（在技能创建器根目录下执行）：
+    python -m scripts.quick_validate <技能目录>           # 只做语法/格式校验
+    python -m scripts.quick_validate <技能目录> --deep    # 额外做内容层检查（行数、触发词、examples、evals）
 
 退出码：0 = 通过；1 = 硬错误；deep 模式下的 warning 不阻断。
 """

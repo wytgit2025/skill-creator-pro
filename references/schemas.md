@@ -32,7 +32,32 @@
 - `evals[].prompt`：要执行的任务
 - `evals[].expected_output`：人类可读的成功标准描述
 - `evals[].files`：可选，输入文件路径列表（相对技能根目录）
-- `evals[].expectations`：可验证的断言列表
+- `evals[].expectations`：可验证的断言列表。字段名就叫 `expectations`，不要写成 `assertions`
+
+---
+
+## eval_metadata.json
+
+每个测试用例的运行配置，和 `evals/evals.json` 里的用例一一对应。位于 workspace 的 `<iteration-N>/<用例目录名>/eval_metadata.json`。
+
+聚合脚本（`scripts/aggregate_benchmark.py`）和评审页面都靠这个文件拿用例名与断言——**漏写会被静默跳过**，基准页会显示空值。
+
+```json
+{
+  "eval_id": 0,
+  "eval_name": "描述性-名字-这里放测试什么",
+  "prompt": "用户的任务提示词",
+  "expectations": []
+}
+```
+
+**字段说明：**
+- `eval_id`：整数 ID，对应 `evals/evals.json` 里的 `evals[].id`
+- `eval_name`：人类可读的用例名，评审页面拿它当章节标题；建议和目录名保持一致
+- `prompt`：这一轮实际发给执行 agent 的任务提示词
+- `expectations`：断言列表，起草时可以为空数组，跑完测试再补齐
+
+**目录约定：** 用例目录名用描述性名字（前缀不做要求），下面每个配置一个子目录（`with_skill` / `without_skill`，优化已有技能时用 `new_skill` / `old_skill`），`grading.json` 直接放在配置目录下；一个配置要跑多次时再往下加 `run-1`、`run-2`。
 
 ---
 
@@ -294,10 +319,10 @@
 - `runs[]`：单次运行结果
   - `eval_id`：数字 ID
   - `eval_name`：人类可读的测试用例名称（在查看器里当章节标题）
-  - `configuration`：必须是 `"with_skill"` 或 `"without_skill"`（查看器用这个字符串做分组和颜色编码）
+  - `configuration`：配置目录名。查看器认这四种——`"with_skill"` / `"without_skill"`（新建技能）、`"new_skill"` / `"old_skill"`（优化已有技能），其中 `without_skill` 和 `old_skill` 会被标成基线；其他名字也能聚合，但页面不显示配置徽章
   - `run_number`：整数运行次数（1, 2, 3...）
-  - `result`：嵌套对象，包含 `pass_rate`、`passed`、`total`、`time_seconds`、`tokens`、`errors`
-- `run_summary`：每个配置的统计汇总
+  - `result`：嵌套对象，包含 `pass_rate`、`passed`、`failed`、`total`、`time_seconds`、`tokens`、`tool_calls`、`errors`
+- `run_summary`：每个配置的统计汇总。**键的顺序有意义**——带技能的配置在前，基线在后，`delta` 是用前者减后者算出来的
   - `with_skill` / `without_skill`：各包含 `pass_rate`、`time_seconds`、`tokens` 对象，带 `mean` 和 `stddev` 字段
   - `delta`：差值字符串，比如 `"+0.50"`、`"+13.0"`、`"+1700"`
 - `notes`：分析代理的自由格式观察

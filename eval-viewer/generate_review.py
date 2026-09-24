@@ -5,9 +5,11 @@ Reads the workspace directory, discovers runs (directories with outputs/),
 embeds all output data into a self-contained HTML page, and serves it via
 a tiny HTTP server. Feedback auto-saves to feedback.json in the workspace.
 
-Usage:
-    python generate_review.py <workspace-path> [--port PORT] [--skill-name NAME]
-    python generate_review.py <workspace-path> --previous-feedback /path/to/old/feedback.json
+Usage（脚本不在 scripts 包里，按路径直接调用）：
+    python <技能创建器路径>/eval-viewer/generate_review.py <workspace-path> \
+        [--port PORT] [--skill-name NAME] [--benchmark benchmark.json]
+    # 第 2 轮起加 --previous-workspace <上一轮 iteration 目录>，页面上能对照上一轮
+    # 无显示器 / 无头环境：改用 --static <输出 html 路径>，生成独立页面而不起服务
 
 No dependencies beyond the Python stdlib are required.
 """

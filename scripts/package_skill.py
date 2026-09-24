@@ -3,11 +3,13 @@
 技能打包器 - 把技能文件夹打成可分发的 .skill 文件
 
 用法：
-    python scripts/package_skill.py <技能文件夹路径> [输出目录]
+    python -m scripts.package_skill <技能文件夹路径> [输出目录]
 
 示例：
-    python scripts/package_skill.py skills/public/my-skill
-    python scripts/package_skill.py skills/public/my-skill ./dist
+    python -m scripts.package_skill skills/public/my-skill
+    python -m scripts.package_skill skills/public/my-skill ./dist
+
+注意：在技能创建器根目录下用 -m 方式运行（本脚本依赖 scripts.quick_validate）。
 """
 
 import fnmatch
@@ -110,10 +112,10 @@ def package_skill(skill_path, output_dir=None):
 
 def main():
     if len(sys.argv) < 2:
-        print("用法：python scripts/package_skill.py <技能文件夹路径> [输出目录]")
+        print("用法：python -m scripts.package_skill <技能文件夹路径> [输出目录]")
         print("\n示例：")
-        print("  python scripts/package_skill.py skills/public/my-skill")
-        print("  python scripts/package_skill.py skills/public/my-skill ./dist")
+        print("  python -m scripts.package_skill skills/public/my-skill")
+        print("  python -m scripts.package_skill skills/public/my-skill ./dist")
         sys.exit(1)
 
     skill_path = sys.argv[1]

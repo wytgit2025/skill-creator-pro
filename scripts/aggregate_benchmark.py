@@ -64,6 +64,72 @@ def calculate_stats(values: list[float]) -> dict:
     }
 
 
+# 配置名排序用：带技能的版本必须排在它的基线版本前面，
+# 评审页面按这个顺序分组、delta 也按这个顺序做减法。
+# 注意先判基线——"without_skill" 也以 "with" 开头。
+_BASELINE_PREFIXES = ("without", "old")
+_PRIMARY_PREFIXES = ("with", "new")
+
+
+def order_configs(configs: list[str]) -> list[str]:
+    """把带技能的配置排到基线前面。认不出的命名排在中间，同档按名字排。"""
+    def rank(name: str) -> int:
+        lowered = name.lower()
+        if lowered.startswith(_BASELINE_PREFIXES):
+            return 2
+        if lowered.startswith(_PRIMARY_PREFIXES):
+            return 0
+        return 1
+
+    return sorted(configs, key=lambda name: (rank(name), name))
+
+
+def _iter_run_dirs(eval_dir: Path):
+    """产出 (config 名, run 目录, run 序号)。
+
+    支持两种布局：SKILL.md 里写的扁平布局 <eval-dir>/<config>/grading.json
+    （一个配置一次运行），以及配置下再分 run-N 的多轮布局。
+    """
+    for config_dir in sorted(p for p in eval_dir.iterdir() if p.is_dir()):
+        if (config_dir / "grading.json").exists():
+            yield config_dir.name, config_dir, 1
+            continue
+
+        for run_dir in sorted(config_dir.glob("run-*")):
+            if not (run_dir / "grading.json").exists():
+                print(f"警告：{run_dir} 里找不到 grading.json")
+                continue
+            try:
+                run_number = int(run_dir.name.split("-", 1)[1])
+            except ValueError:
+                run_number = 1
+            yield config_dir.name, run_dir, run_number
+
+
+def _read_eval_meta(eval_dir: Path, fallback_index: int):
+    """读 eval_metadata.json 的 eval_id / eval_name，缺了就退回目录名和序号。"""
+    meta = {}
+    metadata_path = eval_dir / "eval_metadata.json"
+    if metadata_path.exists():
+        try:
+            with open(metadata_path) as mf:
+                meta = json.load(mf)
+        except (json.JSONDecodeError, OSError):
+            meta = {}
+
+    eval_id = meta.get("eval_id")
+    if eval_id is None and eval_dir.name.startswith("eval-"):
+        try:
+            eval_id = int(eval_dir.name.split("-", 1)[1])
+        except ValueError:
+            eval_id = None
+    if eval_id is None:
+        eval_id = fallback_index
+
+    # 目录名是描述性的（SKILL.md 要求），当 eval_name 用正合适
+    return eval_id, meta.get("eval_name") or eval_dir.name
+
+
 def load_run_results(benchmark_dir: Path) -> dict:
     """
     Load all run results from a benchmark directory.
@@ -73,108 +139,92 @@ def load_run_results(benchmark_dir: Path) -> dict:
     """
     # Support both layouts: eval dirs directly under benchmark_dir, or under runs/
     runs_dir = benchmark_dir / "runs"
-    if runs_dir.exists():
-        search_dir = runs_dir
-    elif list(benchmark_dir.glob("eval-*")):
-        search_dir = benchmark_dir
-    else:
-        print(f"在 {benchmark_dir} 或 {benchmark_dir / 'runs'} 里找不到测试用例目录")
-        return {}
+    search_dir = runs_dir if runs_dir.exists() else benchmark_dir
 
     results: dict[str, list] = {}
+    eval_dirs = []
 
-    for eval_idx, eval_dir in enumerate(sorted(search_dir.glob("eval-*"))):
-        metadata_path = eval_dir / "eval_metadata.json"
-        if metadata_path.exists():
-            try:
-                with open(metadata_path) as mf:
-                    eval_id = json.load(mf).get("eval_id", eval_idx)
-            except (json.JSONDecodeError, OSError):
-                eval_id = eval_idx
-        else:
-            try:
-                eval_id = int(eval_dir.name.split("-")[1])
-            except ValueError:
-                eval_id = eval_idx
+    # 用例目录名不做前缀限制（文档要求用描述性名字）：
+    # 有 eval_metadata.json、或下面挂着带 grading.json 的配置目录，就算一个用例目录。
+    for candidate in sorted(p for p in search_dir.iterdir() if p.is_dir()):
+        if candidate.name == "runs":
+            continue
+        if (candidate / "eval_metadata.json").exists() or any(_iter_run_dirs(candidate)):
+            eval_dirs.append(candidate)
+
+    if not eval_dirs:
+        print(f"在 {search_dir} 里找不到测试用例目录（需要 eval_metadata.json，或含 grading.json 的配置目录）")
+        return results
+
+    for eval_idx, eval_dir in enumerate(eval_dirs):
+        eval_id, eval_name = _read_eval_meta(eval_dir, eval_idx)
 
         # Discover config directories dynamically rather than hardcoding names
-        for config_dir in sorted(eval_dir.iterdir()):
-            if not config_dir.is_dir():
-                continue
-            # Skip non-config directories (inputs, outputs, etc.)
-            if not list(config_dir.glob("run-*")):
-                continue
-            config = config_dir.name
+        for config, run_dir, run_number in _iter_run_dirs(eval_dir):
             if config not in results:
                 results[config] = []
 
-            for run_dir in sorted(config_dir.glob("run-*")):
-                run_number = int(run_dir.name.split("-")[1])
-                grading_file = run_dir / "grading.json"
+            grading_file = run_dir / "grading.json"
+            try:
+                with open(grading_file) as f:
+                    grading = json.load(f)
+            except json.JSONDecodeError as e:
+                print(f"警告：{grading_file} 里的 JSON 格式无效：{e}")
+                continue
 
-                if not grading_file.exists():
-                    print(f"警告：{run_dir} 里找不到 grading.json")
-                    continue
+            # Extract metrics
+            result = {
+                "eval_id": eval_id,
+                "eval_name": eval_name,
+                "run_number": run_number,
+                "pass_rate": grading.get("summary", {}).get("pass_rate", 0.0),
+                "passed": grading.get("summary", {}).get("passed", 0),
+                "failed": grading.get("summary", {}).get("failed", 0),
+                "total": grading.get("summary", {}).get("total", 0),
+            }
 
-                try:
-                    with open(grading_file) as f:
-                        grading = json.load(f)
-                except json.JSONDecodeError as e:
-                    print(f"警告：{grading_file} 里的 JSON 格式无效：{e}")
-                    continue
+            # Extract timing — check grading.json first, then sibling timing.json
+            # (兼容两个位置：run 根目录 / outputs/ 子目录)
+            timing = grading.get("timing", {})
+            result["time_seconds"] = timing.get("total_duration_seconds", 0.0)
+            result["tokens"] = timing.get("total_tokens", 0)
+            for timing_file in (run_dir / "timing.json", run_dir / "outputs" / "timing.json"):
+                if result["time_seconds"] > 0 and result["tokens"] > 0:
+                    break
+                if timing_file.exists():
+                    try:
+                        with open(timing_file) as tf:
+                            timing_data = json.load(tf)
+                        if result["time_seconds"] == 0.0:
+                            result["time_seconds"] = timing_data.get("total_duration_seconds", 0.0)
+                        if result["tokens"] == 0:
+                            result["tokens"] = timing_data.get("total_tokens", 0)
+                    except json.JSONDecodeError:
+                        pass
 
-                # Extract metrics
-                result = {
-                    "eval_id": eval_id,
-                    "run_number": run_number,
-                    "pass_rate": grading.get("summary", {}).get("pass_rate", 0.0),
-                    "passed": grading.get("summary", {}).get("passed", 0),
-                    "failed": grading.get("summary", {}).get("failed", 0),
-                    "total": grading.get("summary", {}).get("total", 0),
-                }
+            # Extract metrics if available
+            metrics = grading.get("execution_metrics", {})
+            result["tool_calls"] = metrics.get("total_tool_calls", 0)
+            if not result.get("tokens"):
+                result["tokens"] = metrics.get("output_chars", 0)
+            result["errors"] = metrics.get("errors_encountered", 0)
 
-                # Extract timing — check grading.json first, then sibling timing.json
-                # (兼容两个位置：run 根目录 / outputs/ 子目录)
-                timing = grading.get("timing", {})
-                result["time_seconds"] = timing.get("total_duration_seconds", 0.0)
-                result["tokens"] = timing.get("total_tokens", 0)
-                for timing_file in (run_dir / "timing.json", run_dir / "outputs" / "timing.json"):
-                    if result["time_seconds"] > 0 and result["tokens"] > 0:
-                        break
-                    if timing_file.exists():
-                        try:
-                            with open(timing_file) as tf:
-                                timing_data = json.load(tf)
-                            if result["time_seconds"] == 0.0:
-                                result["time_seconds"] = timing_data.get("total_duration_seconds", 0.0)
-                            if result["tokens"] == 0:
-                                result["tokens"] = timing_data.get("total_tokens", 0)
-                        except json.JSONDecodeError:
-                            pass
+            # Extract expectations — viewer requires fields: text, passed, evidence
+            raw_expectations = grading.get("expectations", [])
+            for exp in raw_expectations:
+                if "text" not in exp or "passed" not in exp:
+                    print(f"警告：{grading_file} 里的断言缺少必填字段（text, passed, evidence）：{exp}")
+            result["expectations"] = raw_expectations
 
-                # Extract metrics if available
-                metrics = grading.get("execution_metrics", {})
-                result["tool_calls"] = metrics.get("total_tool_calls", 0)
-                if not result.get("tokens"):
-                    result["tokens"] = metrics.get("output_chars", 0)
-                result["errors"] = metrics.get("errors_encountered", 0)
+            # Extract notes from user_notes_summary
+            notes_summary = grading.get("user_notes_summary", {})
+            notes = []
+            notes.extend(notes_summary.get("uncertainties", []))
+            notes.extend(notes_summary.get("needs_review", []))
+            notes.extend(notes_summary.get("workarounds", []))
+            result["notes"] = notes
 
-                # Extract expectations — viewer requires fields: text, passed, evidence
-                raw_expectations = grading.get("expectations", [])
-                for exp in raw_expectations:
-                    if "text" not in exp or "passed" not in exp:
-                        print(f"警告：{grading_file} 里的断言缺少必填字段（text, passed, evidence）：{exp}")
-                result["expectations"] = raw_expectations
-
-                # Extract notes from user_notes_summary
-                notes_summary = grading.get("user_notes_summary", {})
-                notes = []
-                notes.extend(notes_summary.get("uncertainties", []))
-                notes.extend(notes_summary.get("needs_review", []))
-                notes.extend(notes_summary.get("workarounds", []))
-                result["notes"] = notes
-
-                results[config].append(result)
+            results[config].append(result)
 
     return results
 
@@ -186,7 +236,8 @@ def aggregate_results(results: dict) -> dict:
     Returns run_summary with stats for each configuration and delta.
     """
     run_summary = {}
-    configs = list(results.keys())
+    # 顺序即语义：带技能的配置在前，基线在后（评审页面分组和 delta 都依赖这个顺序）
+    configs = order_configs(list(results.keys()))
 
     for config in configs:
         runs = results.get(config, [])
@@ -209,7 +260,7 @@ def aggregate_results(results: dict) -> dict:
             "tokens": calculate_stats(tokens)
         }
 
-    # Calculate delta between the first two configs (if two exist)
+    # 前一个是带技能的版本，后一个是它的基线
     if len(configs) >= 2:
         primary = run_summary.get(configs[0], {})
         baseline = run_summary.get(configs[1], {})
@@ -238,11 +289,14 @@ def generate_benchmark(benchmark_dir: Path, skill_name: str = "", skill_path: st
     run_summary = aggregate_results(results)
 
     # Build runs array for benchmark.json
+    # 同样按"带技能在前"的顺序输出，评审页面直接按数组顺序渲染
+    ordered_configs = order_configs(list(results.keys()))
     runs = []
-    for config in results:
+    for config in ordered_configs:
         for result in results[config]:
             runs.append({
                 "eval_id": result["eval_id"],
+                "eval_name": result["eval_name"],
                 "configuration": config,
                 "run_number": result["run_number"],
                 "result": {
@@ -266,6 +320,13 @@ def generate_benchmark(benchmark_dir: Path, skill_name: str = "", skill_path: st
         for r in config
     ))
 
+    # 每个用例在每个配置下实际跑了几次（不写死 3——扁平布局下就是 1 次）
+    per_eval_config: dict[tuple, int] = {}
+    for config in ordered_configs:
+        for result in results[config]:
+            key = (result["eval_id"], config)
+            per_eval_config[key] = per_eval_config.get(key, 0) + 1
+
     benchmark = {
         "metadata": {
             "skill_name": skill_name or "<skill-name>",
@@ -274,7 +335,8 @@ def generate_benchmark(benchmark_dir: Path, skill_name: str = "", skill_path: st
             "analyzer_model": "<model-name>",
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "evals_run": eval_ids,
-            "runs_per_configuration": 3
+            # 每个用例在每个配置下跑几次，取实际最大值
+            "runs_per_configuration": max(per_eval_config.values(), default=0)
         },
         "runs": runs,
         "run_summary": run_summary,

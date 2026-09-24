@@ -18,7 +18,7 @@ from pathlib import Path
 SKILL_TEMPLATE = """---
 name: {skill_name}
 version: "0.1.0"
-description: "TODO: 第三人称写清两件事——这个技能做什么 + 什么时候触发（具体场景/文件类型/用户会说什么话）。宁可比写窄了好，也别写宽。即使用户没点名，只要场景对就应该触发。"
+description: "TODO：第三人称写清两件事——这个技能做什么 + 什么时候触发（具体场景/文件类型/用户会说什么话）。宁可比写窄了好，也别写宽。即使用户没点名，只要场景对就应该触发。"
 ---
 
 # {skill_title}
@@ -156,21 +156,21 @@ EVALS_TEMPLATE = """{
       "prompt": "用户真实会说的一句任务话（不是指令，是口语化的请求）",
       "expected_output": "期望结果的客观描述：成功长什么样、有哪些必须出现的要素",
       "files": [],
-      "assertions": []
+      "expectations": []
     },
     {
       "id": 2,
       "prompt": "边界情况：这个技能应该能处理但容易翻车的一种输入",
       "expected_output": "期望结果的客观描述",
       "files": [],
-      "assertions": []
+      "expectations": []
     },
     {
       "id": 3,
       "prompt": "不该触发的反例：用户问了个相邻问题，但这个技能其实不该上",
       "expected_output": "期望模型不要强行套这个技能，而是用通用能力回答",
       "files": [],
-      "assertions": []
+      "expectations": []
     }
   ]
 }
@@ -305,7 +305,8 @@ def init_skill(skill_name, path):
     print("2. 改 evals/evals.json 里的 3 个测试用例成真实场景")
     print("3. 改 examples/example-pair.md 成真实的 input/output 对")
     print("4. 列一下这个技能里哪些是每次都重复做的确定性动作——能写成脚本的必须写进 scripts/")
-    print("5. 准备好后跑：python scripts/quick_validate.py <skill-dir> --deep")
+    print("5. 准备好后跑：python -m scripts.quick_validate <skill-dir> --deep")
+    print("   （在技能创建器根目录下执行；直接写 python scripts/xxx.py 会报 ModuleNotFoundError）")
 
     return skill_dir
 
