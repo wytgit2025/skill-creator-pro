@@ -34,6 +34,8 @@
 - `evals[].files`：可选，输入文件路径列表（相对技能根目录）
 - `evals[].expectations`：可验证的断言列表。字段名就叫 `expectations`，不要写成 `assertions`
 
+> **注意**：这里 `evals.json` 的 `expectations` 是**字符串数组**（待打分的断言）；而下面 `grading.json` 的 `expectations` 是**对象数组**（`text`/`passed`/`evidence`）。两个字段同名但类型不同，别混。
+
 ---
 
 ## eval_metadata.json

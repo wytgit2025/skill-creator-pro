@@ -86,68 +86,6 @@ if __name__ == "__main__":
     main()
 '''
 
-EXAMPLE_REFERENCE = """# Reference Documentation for {skill_title}
-
-This is a placeholder for detailed reference documentation.
-Replace with actual reference content or delete if not needed.
-
-Example real reference docs from other skills:
-- product-management/references/communication.md - Comprehensive guide for status updates
-- product-management/references/context_building.md - Deep-dive on gathering context
-- bigquery/references/ - API references and query examples
-
-## When Reference Docs Are Useful
-
-Reference docs are ideal for:
-- Comprehensive API documentation
-- Detailed workflow guides
-- Complex multi-step processes
-- Information too lengthy for main SKILL.md
-- Content that's only needed for specific use cases
-
-## Structure Suggestions
-
-### API Reference Example
-- Overview
-- Authentication
-- Endpoints with examples
-- Error codes
-- Rate limits
-
-### Workflow Guide Example
-- Prerequisites
-- Step-by-step instructions
-- Common patterns
-- Troubleshooting
-- Best practices
-"""
-
-EXAMPLE_ASSET = """# Example Asset File
-
-This placeholder represents where asset files would be stored.
-Replace with actual asset files (templates, images, fonts, etc.) or delete if not needed.
-
-Asset files are NOT intended to be loaded into context, but rather used within
-the output the AI agent produces.
-
-Example asset files from other skills:
-- Brand guidelines: logo.png, slides_template.pptx
-- Frontend builder: hello-world/ directory with HTML/React boilerplate
-- Typography: custom-font.ttf, font-family.woff2
-- Data: sample_data.csv, test_dataset.json
-
-## Common Asset Types
-
-- Templates: .pptx, .docx, boilerplate directories
-- Images: .png, .jpg, .svg, .gif
-- Fonts: .ttf, .otf, .woff, .woff2
-- Boilerplate code: Project directories, starter files
-- Icons: .ico, .svg
-- Data files: .csv, .json, .xml, .yaml
-
-Note: This is a text placeholder. Actual assets can be any file type.
-"""
-
 EVALS_TEMPLATE = """{
   "skill_name": "%s",
   "evals": [
@@ -213,13 +151,16 @@ def title_case_skill_name(skill_name):
     return ' '.join(word.capitalize() for word in skill_name.split('-'))
 
 
-def init_skill(skill_name, path):
+def init_skill(skill_name, path, capabilities=()):
     """
     Initialize a new skill directory with template SKILL.md.
 
     Args:
         skill_name: Name of the skill
         path: Path where the skill directory should be created
+        capabilities: 能力位集合，如 {"scripts", "evals"} / {"scripts"} / ()。
+                      缺省为空 = 不预设（只建 SKILL.md + examples/），由调用方判断后显式传入。
+                      决定生成哪些目录：scripts → scripts/；evals → evals/；examples/ 恒建。
 
     Returns:
         Path to created skill directory, or None if error
@@ -242,9 +183,10 @@ def init_skill(skill_name, path):
 
     # Create SKILL.md from template
     skill_title = title_case_skill_name(skill_name)
+    caps = set(capabilities)
     skill_content = SKILL_TEMPLATE.format(
         skill_name=skill_name,
-        skill_title=skill_title
+        skill_title=skill_title,
     )
 
     skill_md_path = skill_dir / 'SKILL.md'
@@ -255,43 +197,34 @@ def init_skill(skill_name, path):
         print(f"❌ Error creating SKILL.md: {e}")
         return None
 
-    # Create resource directories with example files
+    # Create resource directories（按能力位）
     try:
-        # Create scripts/ directory with example script
-        scripts_dir = skill_dir / 'scripts'
-        scripts_dir.mkdir(exist_ok=True)
-        example_script = scripts_dir / 'example.py'
-        example_script.write_text(EXAMPLE_SCRIPT.format(skill_name=skill_name))
-        example_script.chmod(0o755)
-        print("✅ Created scripts/example.py")
-
-        # Create references/ directory with example reference doc
-        references_dir = skill_dir / 'references'
-        references_dir.mkdir(exist_ok=True)
-        example_reference = references_dir / 'api_reference.md'
-        example_reference.write_text(EXAMPLE_REFERENCE.format(skill_title=skill_title))
-        print("✅ Created references/api_reference.md")
-
-        # Create assets/ directory with example asset placeholder
-        assets_dir = skill_dir / 'assets'
-        assets_dir.mkdir(exist_ok=True)
-        example_asset = assets_dir / 'example_asset.txt'
-        example_asset.write_text(EXAMPLE_ASSET)
-        print("✅ Created assets/example_asset.txt")
-
-        # Create evals/ directory with a starter evals.json (3 cases)
-        evals_dir = skill_dir / 'evals'
-        evals_dir.mkdir(exist_ok=True)
-        evals_file = evals_dir / 'evals.json'
-        evals_file.write_text(EVALS_TEMPLATE % skill_name)
-        print("✅ Created evals/evals.json")
-
-        # Create examples/ directory with an input/output pair template
+        # examples/ 恒建
         examples_dir = skill_dir / 'examples'
         examples_dir.mkdir(exist_ok=True)
         example_pair = examples_dir / 'example-pair.md'
         example_pair.write_text(EXAMPLE_PAIR)
         print("✅ Created examples/example-pair.md")
+
+        # scripts/：声明了 scripts 能力位才建
+        if 'scripts' in caps:
+            scripts_dir = skill_dir / 'scripts'
+            scripts_dir.mkdir(exist_ok=True)
+            example_script = scripts_dir / 'example.py'
+            example_script.write_text(EXAMPLE_SCRIPT.format(skill_name=skill_name))
+            example_script.chmod(0o755)
+            print("✅ Created scripts/example.py")
+
+        # evals/：声明了 evals 能力位才建
+        if 'evals' in caps:
+            evals_dir = skill_dir / 'evals'
+            evals_dir.mkdir(exist_ok=True)
+            evals_file = evals_dir / 'evals.json'
+            evals_file.write_text(EVALS_TEMPLATE % skill_name)
+            print("✅ Created evals/evals.json")
+
+        if not caps:
+            print("   （未声明任何能力位：只建 SKILL.md + examples/；按需再加 scripts/ evals/ references/ assets/）")
     except Exception as e:
         print(f"❌ Error creating resource directories: {e}")
         return None
@@ -302,37 +235,63 @@ def init_skill(skill_name, path):
     print("1. Edit SKILL.md to complete the TODO items and update the description")
     print("   - description 必须第三人称，写清'做什么' + '什么时候用'（Use when / 用于...）")
     print("   - name 推荐动名词形式（如 processing-pdfs），避免 helper/utils 这种模糊名")
-    print("2. 改 evals/evals.json 里的 3 个测试用例成真实场景")
-    print("3. 改 examples/example-pair.md 成真实的 input/output 对")
-    print("4. 列一下这个技能里哪些是每次都重复做的确定性动作——能写成脚本的必须写进 scripts/")
-    print("5. 准备好后跑：python -m scripts.quick_validate <skill-dir> --deep")
+    step = 2
+    print(f"{step}. 改 examples/example-pair.md 成真实的 input/output 对")
+    step += 1
+    if 'evals' in caps:
+        print(f"{step}. 改 evals/evals.json 里的 3 个测试用例成真实场景")
+    else:
+        print(f"{step}. 未声明 evals 能力位——跳过基线 / benchmark，靠用户反馈迭代")
+    step += 1
+    if 'scripts' in caps:
+        print(f"{step}. 列一下技能里每次都重复做的确定性动作——能写成脚本的必须写进 scripts/")
+        step += 1
+    print(f"{step}. 准备好后跑：python3 -m scripts.quick_validate <skill-dir> --deep")
     print("   （在技能创建器根目录下执行；直接写 python scripts/xxx.py 会报 ModuleNotFoundError）")
 
     return skill_dir
 
 
 def main():
-    if len(sys.argv) < 4 or sys.argv[2] != '--path':
-        print("Usage: init_skill.py <skill-name> --path <path>")
-        print("\nSkill name requirements:")
-        print("  - Hyphen-case identifier (e.g., 'data-analyzer')")
-        print("  - Lowercase letters, digits, and hyphens only")
-        print("  - Max 40 characters")
-        print("  - Must match directory name exactly")
-        print("\nExamples:")
-        print("  init_skill.py my-new-skill --path /path/to/active/workspace/.user_skills")
-        print("  # Use another location only when the user explicitly requested it:")
-        print("  init_skill.py custom-skill --path /custom/location")
-        sys.exit(1)
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="Initialize a new skill from template",
+        usage="init_skill.py <skill-name> --path <path>",
+    )
+    parser.add_argument("skill_name", help="Name of the skill (kebab-case)")
+    parser.add_argument("--path", required=True, help="Path where the skill directory should be created")
+    parser.add_argument("--capabilities", default=None,
+                        help="能力位，逗号分隔（scripts,evals）。必填；传空字符串=纯提示词（只建 SKILL.md + examples/）")
+    parser.add_argument("--type", choices=("heavy", "light"), default=None,
+                        help="[已废弃，请用 --capabilities] light 等价于 --capabilities ''")
+    args = parser.parse_args()
 
-    skill_name = sys.argv[1]
-    path = sys.argv[3]
+    skill_name = args.skill_name
+    path = args.path
 
-    print(f"🚀 Initializing skill: {skill_name}")
+    # 解析能力位：--capabilities 优先；--type 兼容；都没传则拒绝——不让脚手架替判断做决定
+    if args.capabilities is not None:
+        caps = {x.strip() for x in args.capabilities.replace(",", " ").split() if x.strip()}
+    elif args.type == "light":
+        caps = set()
+    elif args.type == "heavy":
+        caps = {"scripts", "evals"}
+    else:
+        parser.error(
+            "必须显式指定 --capabilities——先按 references/capability-modules.md 判断要做什么能力模块，再建目录。\n"
+            "  例：--capabilities scripts,evals ｜ --capabilities scripts ｜ --capabilities \"\"（纯提示词）"
+        )
+
+    unknown = caps - {"scripts", "evals"}
+    if unknown:
+        parser.error(f"未知的能力位：{', '.join(sorted(unknown))}（可选：scripts, evals）")
+
+    shown = ", ".join(c for c in ("scripts", "evals") if c in caps) or "无（纯提示词）"
+    print(f"🚀 Initializing skill: {skill_name}（能力位：{shown}）")
     print(f"   Location: {path}")
     print()
 
-    result = init_skill(skill_name, path)
+    result = init_skill(skill_name, path, capabilities=caps)
 
     if result:
         sys.exit(0)

@@ -1,0 +1,22 @@
+[
+  {"query": "我想做一个技能，把我每周的周报自动整理成公司规定的那个固定格式，从哪开始弄啊", "should_trigger": true},
+  {"query": "帮我把 ~/agents/my-skill 这个技能改一下，它处理批量重命名的时候老是漏掉子目录里的文件", "should_trigger": true},
+  {"query": "我写了个技能叫 pptx-helper，但用户说\"帮我做份 PPT\"的时候它死活不触发，能不能帮我看看 description 怎么改", "should_trigger": true},
+  {"query": "帮我给 /Users/wyt/agents/dingtalk-wiki 这个技能跑一遍测试用例看看通过率，感觉最近改完反而变差了", "should_trigger": true},
+  {"query": "想量化对比一下：我这个技能装上和没装的时候，模型完成任务的成功率差多少，有办法测吗", "should_trigger": true},
+  {"query": "按照官方 skill 的规范帮我审一下 ~/.qwenworkcn/skills/dingtalk-misc 写得对不对，frontmatter 那些字段合规吗", "should_trigger": true},
+  {"query": "我那个技能里现在散着好几处重复的 JSON 解析逻辑，想抽成一个脚本放进去，怎么组织比较好", "should_trigger": true},
+  {"query": "这个技能怎么打包成 .skill 文件？我要发给同事让他们直接装", "should_trigger": true},
+  {"query": "我们组有一套数据清洗的老流程，想把它沉淀成一个技能，以后新人都能直接调用，需要走哪些步骤", "should_trigger": true},
+  {"query": "SKILL.md 里的 description 我写了快 900 个字符，会不会太长了影响触发？一般控制多少合适", "should_trigger": true},
+  {"query": "帮我优化一下这段 SQL，查询要跑十几秒太慢了 SELECT * FROM orders WHERE ...", "should_trigger": false},
+  {"query": "写个 Python 脚本批量重命名我下载文件夹里的文件，把开头的 IMG_ 去掉", "should_trigger": false},
+  {"query": "帮我做一份 Q3 季度经营总结的 PPT，大概 15 页，要有图表", "should_trigger": false},
+  {"query": "这份英文文档里老出现 skill 这个词，帮我翻译一下这段话是什么意思", "should_trigger": false},
+  {"query": "我们公司下个月要搞个技能比武大赛，帮我写个活动策划方案", "should_trigger": false},
+  {"query": "帮我把这份会议纪要整理成待办清单，标一下谁负责什么", "should_trigger": false},
+  {"query": "我下载了这个技能的压缩包，帮我解压到桌面上去", "should_trigger": false},
+  {"query": "帮我配置一下 ~/.zshrc，加个 ll 的别名指向 ls -lah", "should_trigger": false},
+  {"query": "这段代码报错了帮我看看什么问题：def foo(x): return x / 0", "should_trigger": false},
+  {"query": "帮我把这个 PDF 转成 Word，我要改里面的表格", "should_trigger": false}
+]

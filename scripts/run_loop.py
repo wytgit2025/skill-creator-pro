@@ -58,6 +58,9 @@ def run_loop(
     log_dir: Path | None = None,
     allow_auto_approve: bool | None = None,
     allow_nested_claude: bool | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    abort_on_non_discriminative: bool = True,
 ) -> dict:
     """运行评估 + 改进循环。"""
     name, original_description, content = parse_skill_md(skill_path)
@@ -73,6 +76,7 @@ def run_loop(
 
     history = []
     exit_reason = "unknown"
+    diagnostics: dict = {}
 
     for iteration in range(1, max_iterations + 1):
         if verbose:
@@ -94,8 +98,11 @@ def run_loop(
             trigger_threshold=trigger_threshold,
             allow_auto_approve=allow_auto_approve,
             allow_nested_claude=allow_nested_claude,
+            api_key=api_key,
+            base_url=base_url,
         )
         eval_elapsed = time.time() - t0
+        diagnostics = all_results.get("diagnostics", {}) or {}
 
         train_queries_set = {q["query"] for q in train_set}
         train_result_list = [r for r in all_results["results"] if r["query"] in train_queries_set]
@@ -170,6 +177,19 @@ def run_loop(
             if test_summary:
                 print_eval_stats("测试", test_results["results"], 0)
 
+        # 测试工具自己说"这次测量不可信"时立刻停。
+        # 继续迭代等于拿噪声去"改进"描述：新描述没有任何依据，却会被当成成果交出去。
+        if abort_on_non_discriminative and not diagnostics.get("discriminative", True):
+            exit_reason = "触发测试无区分度，已中止（未基于噪声改描述）"
+            print(f"\n⚠️ {exit_reason}", file=sys.stderr)
+            for warning in diagnostics.get("warnings", []):
+                print(f"⚠️   {warning}", file=sys.stderr)
+            print(
+                "   这次测量不足以支撑改进。确认要强行继续，加 --allow-non-discriminative。",
+                file=sys.stderr,
+            )
+            break
+
         if train_summary["failed"] == 0:
             exit_reason = f"全部通过（第 {iteration} 轮）"
             if verbose:
@@ -234,6 +254,7 @@ def run_loop(
         "holdout": holdout,
         "train_size": len(train_set),
         "test_size": len(test_set),
+        "diagnostics": diagnostics,
         "history": history,
     }
 
@@ -255,12 +276,16 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="输出进度")
     parser.add_argument("--report", default="auto", help="HTML 报告输出路径（'auto'=临时文件，'none'=关闭）")
     parser.add_argument("--results-dir", default=None, help="把所有输出保存到这个目录下的时间戳子目录")
+    parser.add_argument(
+        "--allow-non-discriminative",
+        action="store_true",
+        help="即使触发测试无区分度也继续改进描述（默认中止——无区分度的数据改不出可信的新描述）",
+    )
     args = parser.parse_args()
 
-    # 先检测平台
-    from scripts.platform_detect import detect_platform
-    platform = detect_platform()
-    print(f"检测到运行平台：{platform}", file=sys.stderr)
+    # 先检测平台（弱信号会提示，避免基于错误平台假设往下走）
+    from scripts.platform_detect import describe_detection
+    print(describe_detection(), file=sys.stderr)
 
     eval_set = json.loads(Path(args.eval_set).read_text())
     skill_path = Path(args.skill_path)
@@ -312,6 +337,9 @@ def main():
         verbose=args.verbose,
         allow_auto_approve=args.allow_auto_approve,
         allow_nested_claude=args.allow_nested_claude,
+        api_key=args.api_key,
+        base_url=args.base_url,
+        abort_on_non_discriminative=not args.allow_non_discriminative,
         live_report_path=live_report_path,
         log_dir=log_dir,
     )

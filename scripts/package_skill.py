@@ -78,6 +78,15 @@ def package_skill(skill_path, output_dir=None):
     if not valid:
         print("   请先修复校验错误再打包。")
         return None
+
+    # 再跑一遍 deep 内容层——不阻断打包，但把提示打出来，
+    # 免得用户只跑 package_skill 就漏掉了内容层的问题（SKILL.md 要求交付前跑两遍校验）。
+    _, deep_messages = validate_skill(skill_path, deep=True)
+    deep_warnings = [text for level, text in deep_messages if level == 'warning']
+    if deep_warnings:
+        print("\n内容层提示（不阻断打包，自行决定是否处理）：")
+        for text in deep_warnings:
+            print(f"  ⚠️  {text}")
     print()
 
     # 确定输出位置

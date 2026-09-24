@@ -40,7 +40,6 @@ RESERVED_NAMES = {'anthropic', 'claude'}
 # 动名词后缀提示（官方推荐 -ing 形式，仅作为建议）
 GERUND_HINTS = ('ing-',)
 
-
 def _check_frontmatter(frontmatter_text):
     """返回 (frontmatter_dict, error_message)。成功时 error_message 为 None。"""
     try:
@@ -172,10 +171,10 @@ def validate_skill(skill_path, deep=False):
                     "description 里没看到明确的触发场景短语（Use when / 用于 / 当...时），"
                     "模型可能不知道什么时候该调用这个技能"))
 
-        # description 里有英文冒号会导致 YAML 解析失败
-        if re.search(r'[\u4e00-\u9fff]:', description) or re.search(r'\w:', description):
-            messages.append(('warning',
-                "description 里有英文冒号——YAML 会解析失败，建议换成破折号（-）或全角冒号（：）"))
+        # description 里的英文冒号问题只在 YAML 解析失败时才报
+        # （_check_frontmatter 已经在解析失败时给了提示）。
+        # 如果 description 用引号包起来了（SKILL.md 标准写法），冒号根本不会导致解析失败。
+        # 静态正则扫描 \w: 会误报 "Use it when: extracting" 这种正常写法。
 
         # examples
         examples_dir = skill_path / 'examples'
@@ -192,15 +191,16 @@ def validate_skill(skill_path, deep=False):
                         f"examples/{ex_file.name} 里还有模板占位符——"
                         "换成真实的 input/output 对，别留 TODO"))
 
-        # evals
+        # evals：有就检查格式，没有就不管（"该不该有"属于语义判断，校验器做不了）
         evals_path = skill_path / 'evals' / 'evals.json'
-        if not evals_path.exists() and not (skill_path / 'evals.json').exists() and 'evals/evals.json' not in content:
-            messages.append(('warning',
-                "没看到 evals/evals.json——官方建议至少写 3 个测试用例再开始迭代"))
-        elif evals_path.exists():
+        if evals_path.exists():
             try:
                 evals_data = json.loads(evals_path.read_text())
-                for ev in evals_data.get('evals', []):
+                evals_list = evals_data.get('evals', [])
+                if len(evals_list) < 3:
+                    messages.append(('warning',
+                        f"evals/evals.json 只有 {len(evals_list)} 条用例——官方建议至少 3 个再开始迭代"))
+                for ev in evals_list:
                     p = ev.get('prompt', '')
                     if '用户真实会说' in p or '边界情况' in p or '不该触发' in p:
                         messages.append(('warning',
@@ -209,12 +209,8 @@ def validate_skill(skill_path, deep=False):
             except Exception:
                 pass
 
-        # scripts 存在性
-        if not (skill_path / 'scripts').exists():
-            messages.append(('warning',
-                "没有 scripts/ 目录——如果这个技能里有每次都要重复做的确定性操作"
-                "（格式转换、解析、校验），应该写成脚本，不要让模型每次临场写"))
-        else:
+        # scripts 目录：有就检查语法与合规，没有就不管
+        if (skill_path / 'scripts').exists():
             # 合规扫描：scripts/ 里的 .py 有没有往外发数据 / 读敏感文件
             import re as _re
             network_patterns = [
@@ -228,10 +224,11 @@ def validate_skill(skill_path, deep=False):
                 r'\.env',
                 r'os\.environ\[',
                 r'os\.getenv\s*\(',
-                r'api_key',
-                r'token',
-                r'password',
-                r'secret',
+                r'\bapi[_-]?key\b',
+                r'\btoken\b',
+                r'\b(access|auth|api|refresh)[_-]?token\b',
+                r'\bpassword\b',
+                r'\bsecret\b',
             ]
             for py_file in (skill_path / 'scripts').rglob('*.py'):
                 try:

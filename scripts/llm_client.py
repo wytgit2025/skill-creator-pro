@@ -20,6 +20,7 @@ LLM 客户端 - 支持四平台原生调用 + OpenAI 兼容 API
 
 import os
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -27,7 +28,17 @@ import tempfile
 import requests
 from typing import Optional
 
-from scripts.platform_detect import detect_platform
+from scripts.platform_detect import (
+    KNOWN_PLATFORMS,
+    PLATFORM_OVERRIDE_ENV,
+    detect_platform,
+    detect_platform_detail,
+    format_detection,
+    override_platform,
+)
+
+# 已提示过"OPENAI_API_KEY 覆盖了原生平台检测"，避免并行 worker 刷屏
+_warned_api_key_override = False
 
 
 def _env_flag(name: str) -> bool:
@@ -316,6 +327,10 @@ def _iter_stdout_chunks(process: subprocess.Popen, timeout: float):
     原来触发测试用的是 `select.select([process.stdout], ...)` + `os.read`，
     这在 Windows 上直接不可用——Windows 的 select 只认 socket，传管道会抛 OSError。
     改成后台线程阻塞读、主线程轮询，Unix 和 Windows 行为一致。
+
+    超时后主线程返回，_pump 线程可能还阻塞在 os.read 上。
+    调用方在 finally 里 kill 进程会让管道关闭、os.read 返回空，
+    但存在时间窗口。这里在生成器终止时确保等待线程退出。
     """
     import threading
     import time as time_mod
@@ -336,19 +351,26 @@ def _iter_stdout_chunks(process: subprocess.Popen, timeout: float):
         finally:
             finished.set()
 
-    threading.Thread(target=_pump, daemon=True).start()
+    pump_thread = threading.Thread(target=_pump, daemon=True)
+    pump_thread.start()
 
     deadline = time_mod.time() + timeout
-    while True:
-        if chunks:
-            yield chunks.pop(0)
-            continue
-        if finished.is_set():
-            return
-        remaining = deadline - time_mod.time()
-        if remaining <= 0:
-            return
-        finished.wait(min(0.1, remaining))
+    try:
+        while True:
+            if chunks:
+                yield chunks.pop(0)
+                continue
+            if finished.is_set():
+                return
+            remaining = deadline - time_mod.time()
+            if remaining <= 0:
+                return
+            finished.wait(min(0.1, remaining))
+    finally:
+        # 确保泵线程退出：等待最多 2 秒让管道关闭后线程自然结束。
+        # 调用方通常在 finally 里 process.kill()，管道关闭后 os.read 返回空。
+        # 如果 2 秒后仍在阻塞（异常情况），daemon 线程会在进程退出时被回收。
+        finished.wait(2.0)
 
 
 class NativeCLIClient:
@@ -808,11 +830,54 @@ class WorkBuddyNativeCLIClient(NativeCLIClient):
                             continue
 
                         # 检查 stream 事件里有没有调用自定义命令
-                        # CodeBuddy 的 stream-json 格式和 Claude 类似
-                        event_str = json.dumps(event)
-                        if clean_name in event_str:
-                            triggered = True
-                            break
+                        # CodeBuddy 的 stream-json 格式和 Claude 类似，
+                        # 但不再用 json.dumps 全文搜索——太粗放，
+                        # stderr 回显、命令日志里出现 clean_name 都会误判。
+                        # 改成结构化解析：只在 tool_use / command 调用字段里检查。
+                        event_type = event.get("type", "")
+                        se = event.get("event", {}) if event_type == "stream_event" else event
+
+                        # 1) stream_event 里的 content_block_start / assistant
+                        se_type = se.get("type", "")
+                        if se_type == "content_block_start":
+                            cb = se.get("content_block", {})
+                            if cb.get("type") == "tool_use":
+                                tool_name = cb.get("name", "")
+                                if clean_name in tool_name:
+                                    triggered = True
+                                    break
+                        elif se_type == "content_block_delta":
+                            delta = se.get("delta", {})
+                            if delta.get("type") == "input_json_delta":
+                                partial = delta.get("partial_json", "")
+                                # 积累到一定程度时尝试解析
+                                if clean_name in partial and len(partial) > 20:
+                                    triggered = True
+                                    break
+                        elif event_type == "assistant" or se_type == "assistant":
+                            message = se.get("message", se)
+                            for content_item in message.get("content", []):
+                                if content_item.get("type") != "tool_use":
+                                    continue
+                                tool_name = content_item.get("name", "")
+                                tool_input = content_item.get("input", {})
+                                if clean_name in tool_name:
+                                    triggered = True
+                                    break
+                                # 检查 command / skill 字段
+                                for field in ("command", "skill", "file_path"):
+                                    val = str(tool_input.get(field, ""))
+                                    if clean_name in val:
+                                        triggered = True
+                                        break
+                            if triggered:
+                                break
+                        elif event_type == "result":
+                            # 最终结果事件，检查有没有 command 调用
+                            for cmd_info in event.get("commands_used", []):
+                                if clean_name in str(cmd_info.get("name", "")):
+                                    triggered = True
+                                    break
 
                 # 最后再检查一下剩余 buffer
                 if clean_name in buffer:
@@ -875,8 +940,18 @@ class CodexNativeCLIClient(NativeCLIClient):
         不是事后问模型"该不该触发"，而是把技能描述注入到任务上下文里，
         让模型在真实处理用户查询的过程中自己判断要不要使用这个技能。
         通过输出标记来检测它的决策。
+
+        安全措施：用随机 UUID 标记替代可预测格式，并在 user_query 中
+        剥离标记前缀，防止 prompt injection 伪造触发结果。
         """
-        marker = f"[USE_SKILL: {skill_name}]"
+        import uuid
+
+        # 用随机 UUID 生成不可预测的标记，防止 user_query 里包含标记导致误判
+        marker_id = uuid.uuid4().hex[:12]
+        marker = f"[SKILL_TRIGGER:{marker_id}]"
+
+        # 从 user_query 里剥离任何看起来像触发标记的内容，防注入
+        sanitized_query = re.sub(r'\[SKILL_TRIGGER:[^\]]*\]', '', user_query)
 
         # 构造一个带技能选择的 prompt
         # 让模型在真实处理任务的过程中做决策，而不是事后当裁判
@@ -895,7 +970,7 @@ class CodexNativeCLIClient(NativeCLIClient):
 现在请处理下面的用户查询：
 """
 
-        full_prompt = system_instruction + user_query
+        full_prompt = system_instruction + sanitized_query
 
         try:
             output = self._call_cli(full_prompt)
@@ -903,7 +978,7 @@ class CodexNativeCLIClient(NativeCLIClient):
             return marker in output
         except Exception as e:
             # 如果失败了，降级到纯文本判断
-            print(f"Warning: Codex trigger_test 失败，降级到文本判断: {e}", file=__import__('sys').stderr)
+            print(f"Warning: Codex trigger_test 失败，降级到文本判断: {e}", file=sys.stderr)
             return self._trigger_test_text_fallback(user_query, skill_name, skill_description)
 
 
@@ -952,8 +1027,18 @@ class OpenClawNativeCLIClient(NativeCLIClient):
         不是事后问模型"该不该触发"，而是把技能描述注入到任务上下文里，
         让模型在真实处理用户查询的过程中自己判断要不要使用这个技能。
         通过输出标记来检测它的决策。
+
+        安全措施：用随机 UUID 标记替代可预测格式，并在 user_query 中
+        剥离标记前缀，防止 prompt injection 伪造触发结果。
         """
-        marker = f"[USE_SKILL: {skill_name}]"
+        import uuid
+
+        # 用随机 UUID 生成不可预测的标记，防止 user_query 里包含标记导致误判
+        marker_id = uuid.uuid4().hex[:12]
+        marker = f"[SKILL_TRIGGER:{marker_id}]"
+
+        # 从 user_query 里剥离任何看起来像触发标记的内容，防注入
+        sanitized_query = re.sub(r'\[SKILL_TRIGGER:[^\]]*\]', '', user_query)
 
         # 构造一个带技能选择的 prompt
         system_instruction = f"""你现在是一个智能助手。你有一个可用的技能：
@@ -971,14 +1056,14 @@ class OpenClawNativeCLIClient(NativeCLIClient):
 现在请处理下面的用户查询：
 """
 
-        full_prompt = system_instruction + user_query
+        full_prompt = system_instruction + sanitized_query
 
         try:
             output = self._call_cli(full_prompt)
             # 检查输出里有没有触发标记
             return marker in output
         except Exception as e:
-            print(f"Warning: OpenClaw trigger_test 失败，降级到文本判断: {e}", file=__import__('sys').stderr)
+            print(f"Warning: OpenClaw trigger_test 失败，降级到文本判断: {e}", file=sys.stderr)
             return self._trigger_test_text_fallback(user_query, skill_name, skill_description)
 
 
@@ -987,6 +1072,9 @@ class GenericNativeCLIClient(NativeCLIClient):
     通用原生 CLI 客户端 - 兜底方案。
 
     假设 CLI 的用法是：`<cli> -p "prompt"` 返回文本结果。
+
+    预留：当前 build_client_from_args 尚未接入本类——已识别的平台各有专门客户端，
+    未识别的平台走通用 API 模式。等有通用 CLI 平台需要时再启用。
     """
 
     def __init__(self, cli_command: str, platform_name: str, model: Optional[str] = None):
@@ -1013,9 +1101,32 @@ class GenericNativeCLIClient(NativeCLIClient):
         return result.stdout
 
 
+from dataclasses import dataclass
+
+
+@dataclass
+class ClientConfig:
+    """LLM 客户端配置，替代旧的 FakeArgs 模式。
+
+    所有字段都有默认值 None，表示"未显式设置"，
+    让 build_client_from_args 能区分"用户没传"和"用户传了 None"。
+    """
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    model: Optional[str] = None
+    allow_auto_approve: Optional[bool] = None
+    allow_nested_claude: Optional[bool] = None
+
+
+def _get_attr(args, name: str, default=None):
+    """从 args 对象（argparse Namespace 或 ClientConfig）统一取属性。"""
+    return getattr(args, name, default)
+
+
 def _explicit_flag(args, name: str) -> Optional[bool]:
     """只在用户显式传了开关时返回 True，否则返回 None 让客户端去读环境变量。"""
-    return True if getattr(args, name, False) else None
+    val = _get_attr(args, name, False)
+    return True if val else None
 
 
 def _print_spawn_boundary(client) -> None:
@@ -1027,29 +1138,63 @@ def _print_spawn_boundary(client) -> None:
     print(f"嵌套子进程权限边界：自动确认={auto} / 剔除 CLAUDECODE={nested}", file=sys.stderr)
 
 
+def _announce_platform_override(platform: str) -> None:
+    """显式覆盖必须在 stderr 里说清楚。
+
+    两头都要防：拼错的值不能静默失效（用户会以为开关生效了，实际走了自动检测）；
+    生效的值也要留痕——.zshrc 里残留的覆盖会长期劫持自动检测，不说不出来没人发现。
+    """
+    forced = override_platform()
+    if forced is None:
+        return
+    if forced not in KNOWN_PLATFORMS:
+        print(
+            f"警告：{PLATFORM_OVERRIDE_ENV}={forced} 不是已知平台，已忽略并退回自动检测；"
+            f"可选值：{'、'.join(sorted(KNOWN_PLATFORMS))}",
+            file=sys.stderr,
+        )
+    elif forced == platform:
+        print(f"平台由 {PLATFORM_OVERRIDE_ENV}={forced} 显式指定（非自动检测）", file=sys.stderr)
+
+
 def build_client_from_args(args):
     """
-    从命令行参数构建 LLM 客户端。
+    从命令行参数或 ClientConfig 构建 LLM 客户端。
     自动检测当前平台，优先用原生 CLI 模式，降级到通用 API 模式。
+
+    Args:
+        args: argparse.Namespace（命令行）或 ClientConfig（编程式调用）
     """
     # 如果用户手动指定了 --api-key，就用通用 API 模式
-    api_key = getattr(args, "api_key", None)
+    api_key = _get_attr(args, "api_key")
     if api_key:
+        global _warned_api_key_override
+        native = detect_platform()
+        if native in ("claude", "codex", "workbuddy", "openclaw") and not _warned_api_key_override:
+            _warned_api_key_override = True
+            print(
+                f"提示：检测到 {native} 平台，但存在 OPENAI_API_KEY，已改用通用 API 模式；"
+                "如需原生触发测试（精度更高），请 unset OPENAI_API_KEY。",
+                file=sys.stderr,
+            )
         return LLMClient(
             api_key=api_key,
-            base_url=getattr(args, "base_url", None),
-            model=getattr(args, "model", None),
+            base_url=_get_attr(args, "base_url"),
+            model=_get_attr(args, "model"),
         )
 
-    # 自动检测平台
-    platform = detect_platform()
-    model = getattr(args, "model", None)
+    # 自动检测平台（只检测这一次：下面打印和分支选择共用同一份结果，
+    # 否则打印出的平台可能和实际走的分支对不上）
+    platform, confidence = detect_platform_detail()
+    model = _get_attr(args, "model")
     spawn_flags = {
         "allow_auto_approve": _explicit_flag(args, "allow_auto_approve"),
         "allow_nested_claude": _explicit_flag(args, "allow_nested_claude"),
     }
 
-    print(f"检测到运行平台：{platform}", file=sys.stderr)
+    # 显式覆盖（如果有）要和检测结果一起说清楚，且必须在结果行之前
+    _announce_platform_override(platform)
+    print(format_detection(platform, confidence), file=sys.stderr)
 
     # 根据平台选择原生客户端
     if platform == "claude":
@@ -1073,7 +1218,7 @@ def build_client_from_args(args):
         print("使用通用 OpenAI 兼容 API 模式", file=sys.stderr)
         client = LLMClient(
             api_key=os.environ.get("OPENAI_API_KEY", ""),
-            base_url=getattr(args, "base_url", None),
+            base_url=_get_attr(args, "base_url"),
             model=model,
         )
 

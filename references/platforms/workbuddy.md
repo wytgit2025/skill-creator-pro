@@ -63,7 +63,7 @@ author: enterprise-admin
 - 不再用的技能要及时停用，企业版管理员会定期清理
 
 ## 跑测试
-- 有 CLI 的话，用 `workbuddy run --skill ./my-skill "测试提示词"` 来跑
+- 有 CLI 的话，手动单测用 `workbuddy run --skill ./my-skill "测试提示词"` 来跑；脚本自动触发测试走 `codebuddy -p`（见下「优化描述」）
 - 结果输出到 workspace 目录
 - **本地 daemon API 没接进来**：产品在 `http://localhost:8080/api/v1/...` 有本地服务，但`scripts/` 里没有任何代码用它（`platform_detect.py` 也不探这个端口），别按"没 CLI 也能跑"来规划。要做的话得先拿到接口文档，否则容易盲写。
 

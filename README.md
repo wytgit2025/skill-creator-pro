@@ -37,7 +37,7 @@
 | **豆包工作** | ✅ 对话内手动模式 | ✅ 主 Agent 自测 |
 | **千问办公（QwenWork）** | ✅ 对话内手动模式 | ✅ 主 Agent 自测 |
 
-**自动检测运行环境，优先用原生 CLI，降级到通用 API——你不用管细节，它自己会选最优方案。**
+**自动检测运行环境，优先用原生 CLI，降级到通用 API。** 注意：只有配了 CLI 或 API Key 的环境能跑「自动化」触发测试；豆包工作 / 千问办公这类没有可编程 CLI 的环境会落到**对话内手动模式**（主 Agent 逐条判断），严谨度相同，但要多花些时间。另外，环境识别对弱信号（如「装过千问办公桌面端」）会提示先向用户确认，不会闷头按它走；同一台机器装了多个平台的 CLI 时自动检测分不清，用 `SKILL_CREATOR_PLATFORM=<平台名>` 显式指定即可（填错会警告并退回自动检测）。
 
 ### 🧪 严谨测试闭环，不是凭感觉
 
@@ -56,7 +56,11 @@
 
 ### 📦 一键打包发布
 
-校验 → 打包 → 生成 `.skill` 文件，一条龙搞定（`evals/`、`tests/` 不会进产物）。
+校验 → 打包 → 生成 `.skill` 文件，一条龙搞定（被打包技能里的 `evals/`、`tests/` 会被排除，不会进产物）。
+
+### 🧩 能力模块按需生成，不塞用不上的东西
+
+新建技能时 `scripts/init_skill.py` 的 `--capabilities` 是**必填**的：`scripts`（确定性动作做成脚本）和 `evals`（可验证的测试集）各自独立判断，脚手架不替你预设。判据见 `references/capability-modules.md`——`scripts` 证据不足就先不建；`evals` 即使整体是判断型任务，也要把可客观验证的那部分抽出来做断言。
 
 ---
 
@@ -142,7 +146,7 @@
 
 ```
 skill-creator-pro/
-├── SKILL.md              # 主技能文件（509 行，渐进式加载）
+├── SKILL.md              # 主技能文件（渐进式加载）
 ├── README.md             # 你正在看的这个文件
 ├── LICENSE.txt           # Apache License 2.0
 ├── requirements.txt      # Python 依赖（PyYAML, requests）
@@ -150,7 +154,8 @@ skill-creator-pro/
 ├── agents/               # 子代理指引文档（按需加载）
 │   ├── grader.md         #   怎么对照断言打分
 │   ├── comparator.md     #   怎么做盲测 A/B 对比
-│   └── analyzer.md       #   怎么分析为什么赢了
+│   ├── analyzer.md       #   怎么分析为什么赢了
+│   └── flow-auditor.md   #   审这一轮流程有没有被跳步
 │
 ├── references/           # 参考文档（按需加载）
 │   ├── schemas.md                #   evals / grading / benchmark 的 JSON 结构
@@ -160,6 +165,7 @@ skill-creator-pro/
 │   ├── output-patterns.md        #   输出模板怎么写
 │   ├── skill-collections.md      #   多个相关技能怎么打包成集合
 │   ├── chinese-context.md        #   中文各文体区别 + 国内合规底线
+│   ├── capability-modules.md     #   scripts / evals / 平台字段三个能力模块怎么判
 │   └── platforms/                #   六个运行环境的跑测/优化/交付细节
 │       ├── claude.md             #     Claude Code / Cowork / Claude.ai
 │       ├── workbuddy.md          #     腾讯 WorkBuddy / QClaw（含企业版）
@@ -175,21 +181,25 @@ skill-creator-pro/
 │   ├── generate_review.py  # 评审页面生成器 + HTTP 服务（--static 可出独立 HTML）
 │   └── viewer.html         #   前端模板（完整单页应用）
 │
-├── tests/                # 回归测试（不进打包产物）
-│   ├── test_aggregate_benchmark.py  # benchmark 聚合契约、tokens 量纲
-│   └── __init__.py
+├── evals/                # 测试语料（不进打包产物）
+│   ├── trigger_eval.json #   20 条正/负查询，用来测本技能的 description 触发率
+│   └── paired_ab/        #   配对 A/B 实验语料
+│       └── directions.json #  6 方向 × 3 变体 = 18 个配对单元，三臂 A/B/无技能
 │
-└── scripts/              # Python 脚本（12 个）
+└── scripts/              # 脚本（14 个 .py + 1 模板）
     ├── llm_client.py     #   四平台原生 CLI 客户端 + 通用 API 模式
-    ├── platform_detect.py #   平台自动检测
-    ├── init_skill.py     #   技能脚手架（生成目录骨架）
+    ├── platform_detect.py #   平台自动检测（带置信度，弱信号会提示确认）
+    ├── init_skill.py     #   技能脚手架（--capabilities 必填，不预设）
     ├── run_eval.py       #   跑触发率评估
     ├── run_loop.py       #   评估 + 改进循环
     ├── improve_description.py # 根据失败案例优化描述
+    ├── gen_eval_review.py #   把触发测试集渲染成确认页
     ├── aggregate_benchmark.py # 汇总基准统计
+    ├── paired_ab.py      #   配对 A/B 实验驱动（同方向多臂对照）
     ├── generate_report.py #   生成 HTML 报告
-    ├── package_skill.py  #   打包成 .skill 文件
-    ├── quick_validate.py #   技能快速校验（含 scripts/*.py 语法检查）
+    ├── report_template.html #  HTML 报告模板（generate_report.py 加载）
+    ├── package_skill.py  #   打包成 .skill 文件（含内容层提示）
+    ├── quick_validate.py #   技能快速校验（有则检查：scripts 语法 / evals 格式）
     ├── utils.py          #   共享工具函数
     └── __init__.py
 ```
@@ -236,10 +246,9 @@ skill-creator-pro/
 
 ---
 
-## 🧪 开发者：跑回归测试
+## 🧪 开发者：自检
 
 ```bash
-python3 -m unittest discover -s tests        # benchmark 聚合契约、tokens 量纲
 python3 -m scripts.quick_validate . --deep    # 技能自身的格式与语法校验
 ```
 

@@ -1,7 +1,7 @@
 ---
 name: skill-creator-pro
-description: 创建新技能、修改和优化已有技能，并严格评估技能效果。当用户想要从零创建一个技能、编辑或优化现有技能、运行测试用例验证技能、对技能表现做基准对比、或优化技能的触发描述以提高触发准确率时使用。专业增强版，支持豆包工作、腾讯 WorkBuddy、千问办公、OpenAI Codex、Claude、OpenClaw 六种运行环境，自动识别并适配。
-license: Apache-2.0，源自 Anthropic 官方 skill-creator（Copyright 2026 Anthropic, PBC）的中文化改造，完整条款与署名见 LICENSE.txt
+description: 创建新技能、修改和优化已有技能，并严格评估技能效果。当用户想要从零创建一个技能、编辑或优化现有技能、运行测试用例验证技能、对技能表现做基准对比、或优化技能的触发描述以提高触发准确率时使用。适配 Claude Code、OpenAI Codex、腾讯 WorkBuddy、豆包工作、千问办公、OpenClaw 等环境。
+license: Apache-2.0
 compatibility: 需要 Python 3；脚本校验与打包另需 PyYAML 和 requests。主干流程不绑定特定运行时，任何支持 Agent Skills 开放格式的工具均可用；触发率优化另需可编程调用的 agent 运行时，或对话内手动模式。
 metadata:
   version: "2.2.0"
@@ -15,20 +15,20 @@ metadata:
 
 ---
 
-## 第 0 步：自动识别运行环境
+## 开始前：识别运行环境
 
 开始工作前，先判断你运行在哪个环境里，然后切换对应的模式。**这一步必须在做任何实质性工作之前完成。**
 
 | 环境 | 识别特征 | 测试模式 | 优化模式 |
 |------|---------|---------|---------|
 | **豆包工作** | 有 OrganizerAgent 子任务能力，工作目录在 `.sessions/` 下，有 `present_files` | 主 Agent 自测 + 子任务并行 | 对话内手动，或调 run_loop.py |
-| **腾讯 WorkBuddy** | 有 `workbuddy`/`codebuddy` CLI，frontmatter 带 `agent_created` | CLI 跑测试 | CLI 或通用 API 自动迭代 |
+| **腾讯 WorkBuddy** | 有 CodeBuddy / WorkBuddy 宿主会话标记（`CODEBUDDY_*`），或 `workbuddy`/`codebuddy` CLI；frontmatter 带 `agent_created` | CLI 跑测试 | CLI 或通用 API 自动迭代 |
 | **千问办公** | 有 `~/.qwenworkcn/skills/` 目录，钉钉内可唤起，有 Skill 广场 / 专家套件 | 主 Agent 自测（多智能体并行未验证） | 对话内手动 |
 | **OpenAI Codex** | 有 `codex` CLI，技能在 `.agents/skills/`，`AGENTS.md` 管指令 | 调 `codex exec` 跑测试 | 调 Codex CLI 自动迭代 |
 | **Claude** | 有 `claude` CLI，看到 `available_skills` 系统提示 | spawn 子进程跑测试 | 调 `claude -p` + run_loop.py |
 | **OpenClaw** | `openclaw` CLI，有 ClawHub，模型无关，多消息平台接入 | 通用 API + 子代理并行 | 通用 API 优化循环 |
 
-都不确定就默认通用 API 模式。SKILL.md 已是跨厂商事实标准。
+一台机器装了多个平台的 CLI 时，`which` 只能说明「装了」、分不清你正在哪个里面跑——**自动检测分不清就直接问用户**，并用 `SKILL_CREATOR_PLATFORM=<平台名>` 显式指定（它压过所有自动信号，填错会警告并退回自动检测）。都不确定就默认通用 API 模式。SKILL.md 已是跨厂商事实标准。
 
 ### 环境能力矩阵
 
@@ -92,17 +92,11 @@ metadata:
 
 **动手前先判断：该不该拆？** 官方原则是"多个聚焦的小技能组合起来，胜过一个大而全的技能"。如果你写出来的 description 需要用"和/以及"连接两个不相关的动作（比如"审合同**和**写周报"、"做 PPT**以及**查股价"），那就是两个技能，不要硬塞成一个。判断标准：用户触发这个技能时，是不是 90% 的情况下只用到其中一块？如果是，拆。
 
-**再判断：走轻量流程还是重量流程？** 不是所有技能都需要完整 eval 闭环——skillsmp 上 300 万个技能里大多数就是一个 SKILL.md。
-- **轻量技能**（纯风格/语气、单一格式约束、提示词封装，如"针织海报风""去 AI 味"）：没确定性脚本、输出主观，直接写 SKILL.md + examples/ 交付，**跳过 evals/基线/benchmark**，靠用户反馈迭代。
-- **重量技能**（工具类、工作流类、有确定性重复操作、输出有客观对错，如 PDF 处理、数据提取、合同审查）：才走完整 eval 闭环（带技能+基线、benchmark、触发率优化）。
+**再判断：要做哪些能力模块？** 不给技能贴"轻量/重量"标签——那是二元分类，表达不了现实里的混合技能。改成独立判断 `scripts` / `evals` / 平台字段三个模块，**按结构属性判断，不按领域猜**：判断表、四种组合、方案清单见 `references/capability-modules.md`。
 
-别让一个"风格提示词"技能也背上跑 3 个用例 + 基线对比的负担。
+**判断就地做，不用声明。** 要不要这些模块，直接体现在「建不建对应目录」上——有 `scripts/` 就是有脚本，有 `evals/` 就是有测试。**不要往 frontmatter 塞类型字段**（校验器看目录就够了，声明只会引入不一致）。
 
-**判断完先出方案再动手。** 先判断轻量/重量，然后只列相关项：
-- **轻量**（纯风格/提示词）：技能名、description 方向、调用方式、输入/输出格式、不做什么
-- **重量**（工具类/工作流）：上面 + 要不要脚本、拆几个 references、依赖什么外部工具、要不要 examples/evals
-
-**边界情况问用户：** 写作类技能有固定格式但没脚本——问一句"这个要不要写脚本？"用户说要就重量，不要就轻量。
+**判断完先出方案再动手。** 先定模块，再列相关项：技能名、description 方向、调用方式、输入/输出格式、不做什么；要 `scripts` 就写脚本怎么切怎么调，要 `evals` 就写几个用例、断言怎么设计，要发多平台就补哪些平台字段。**模块可以迭代中增减**，别一次判死。
 
 用户说"可以"再写——别上来就写 500 行，方向错了全白写。
 
@@ -119,10 +113,10 @@ metadata:
 **先初始化骨架（推荐）**：从零建新技能时，先跑 `scripts/init_skill.py` 一键生成目录和模板：
 
 ```bash
-python3 -m scripts.init_skill <skill-name> --path <已确认的 .user_skills 目录>
+python3 -m scripts.init_skill <skill-name> --path <已确认的 .user_skills 目录> --capabilities scripts,evals
 ```
 
-**脚本统一用 `python3 -m scripts.<脚本名>` 调用，工作目录必须是技能创建器根目录**——直接写 `python scripts/xxx.py` 会因包内导入失败报 `ModuleNotFoundError`。它会自动建出 `SKILL.md`（带 TODO 占位符和结构选择建议）以及 `scripts/`、`references/`、`assets/`、`evals/`、`examples/` 五个目录。生成后再按下面的内容填充。如果只是在已有技能上迭代，可以跳过这一步。
+**脚本统一用 `python3 -m scripts.<脚本名>` 调用，工作目录必须是技能创建器根目录**——直接写 `python scripts/xxx.py` 会因包内导入失败报 `ModuleNotFoundError`。`--capabilities` **必填**（脚手架不预设，避免替你做完判断），决定生成哪些目录：`examples/` 恒建，`scripts/` 只在能力位含 `scripts` 时建，`evals/` 只在含 `evals` 时建；**纯提示词技能传 `--capabilities ""`**（只建 `SKILL.md` + `examples/`）。生成后再按下面的内容填充。如果只是在已有技能上迭代，可以跳过这一步。
 
 根据用户访谈的结果，填充以下内容：
 
@@ -335,7 +329,7 @@ spawn 一个 grader 子代理（或者自己内联打分），让它读 `agents/
 
 从技能创建器目录运行聚合脚本：
 ```bash
-python -m scripts.aggregate_benchmark <workspace>/iteration-N --skill-name <技能名>
+python3 -m scripts.aggregate_benchmark <workspace>/iteration-N --skill-name <技能名>
 ```
 
 会生成 `benchmark.json` 和 `benchmark.md`，包含通过率、耗时、token 用量的均值 ± 标准差，以及两组配置的差值。
@@ -362,7 +356,7 @@ python -m scripts.aggregate_benchmark <workspace>/iteration-N --skill-name <技�
 > 用 `generate_review.py`（不要自己写自定义 HTML）。
 
 ```bash
-nohup python <技能创建器路径>/eval-viewer/generate_review.py \
+nohup python3 <技能创建器路径>/eval-viewer/generate_review.py \
   <workspace>/iteration-N \
   --skill-name "我的技能" \
   --benchmark <workspace>/iteration-N/benchmark.json \
@@ -380,6 +374,8 @@ VIEWER_PID=$!
 
 用户说看完了之后，读下载下来的 `feedback.json`（结构是 `reviews[]`，每条带 `run_id`、`feedback`、`timestamp`）。空 feedback = 用户觉得没问题，改进重点放在有具体意见的用例上。用完关掉服务器：`kill $VIEWER_PID 2>/dev/null`。
 
+**动技能之前先自查流程**：按 `agents/flow-auditor.md` 核对这一轮有没有跳步——尤其顺序类红线（"改技能"不能早于"用户评审"）。跳了步的结论不可信，**产出看着挺好也不能替代流程没跳步**，因为后面所有迭代都建立在它的判断上。
+
 ---
 
 ### 方案二：没有并行执行能力的环境
@@ -392,7 +388,7 @@ VIEWER_PID=$!
 - **跳过基线对比**——直接用技能完成任务就行。
 - **评审结果**：没法开浏览器的话，直接在对话里展示。每个测试用例把提示词和输出都展示出来。如果输出是文件，存到文件系统里告诉用户路径，让他自己去看。直接在对话里问："这个效果怎么样？要改什么吗？"
 - **跳过量化基准**——没有基线对比就没意义了，重点放在用户的定性反馈上。
-- **迭代循环**：还是一样——改技能 → 重跑测试 → 要反馈——只是中间没有浏览器评审环节。
+- **迭代循环**：还是一样——改技能 → 重跑测试 → 要反馈——只是中间没有浏览器评审环节。有子代理能力就 spawn 一个按 `agents/flow-auditor.md` 自查有没有跳步，把执行记录和 workspace 路径交给它。
 
 ---
 
@@ -453,7 +449,7 @@ SKILL.md 前置元数据里的 `description` 字段，是决定模型会不会�
 用 `present_files` 工具直接交付技能文件夹或 `.skill` 文件：
 
 ```bash
-python -m scripts.package_skill <技能文件夹路径>
+python3 -m scripts.package_skill <技能文件夹路径>
 ```
 
 打包完，把生成的 `.skill` 文件路径告诉用户，方便他安装。
@@ -477,8 +473,8 @@ python -m scripts.package_skill <技能文件夹路径>
 5. 跑两遍校验——先语法，再内容：
 
    ```bash
-   python -m scripts.quick_validate <技能文件夹路径>          # 语法层：frontmatter + scripts/*.py 语法
-   python -m scripts.quick_validate <技能文件夹路径> --deep   # 内容层：行数/触发词/examples/evals/嵌套引用
+   python3 -m scripts.quick_validate <技能文件夹路径>          # 语法层：frontmatter + scripts/*.py 语法
+   python3 -m scripts.quick_validate <技能文件夹路径> --deep   # 内容层：行数/触发词/examples/evals/嵌套引用
    ```
    deep 模式报的 warning 不阻断，但每条都要看一眼再决定要不要修。
 
@@ -492,7 +488,7 @@ python -m scripts.package_skill <技能文件夹路径>
 ## 参考文件
 
 按需读取，不要全背：
-- `agents/grader.md` — 对照断言打分；`agents/comparator.md` — 盲测 A/B；`agents/analyzer.md` — 为什么一版更好
+- `agents/grader.md` — 对照断言打分；`agents/comparator.md` — 盲测 A/B；`agents/analyzer.md` — 为什么一版更好；`agents/flow-auditor.md` — 审这一轮流程有没有被跳步
 - `references/schemas.md` — evals/grading/benchmark 的 JSON 结构
 - `references/trigger-optimization.md` — description 触发率优化方法与环境前提
 - `references/workflows.md` / `references/output-patterns.md` — 流程组织与模板写法
@@ -504,6 +500,6 @@ python -m scripts.package_skill <技能文件夹路径>
 
 ## 核心循环（别漏）
 
-识别环境 → 判断轻量/重量 → 搞清楚技能做什么 → 写初稿 → 跑测试（重量技能才带基线同轮启动）→ **先把 eval viewer 交给用户看，再自己动手改** → 迭代到满意 → 优化 description 触发率 → 交付。有 TodoList 就记进去。
+识别环境 → 判断能力模块（scripts / evals / 平台字段）→ 搞清楚技能做什么 → 写初稿 → 跑测试（有并行子任务能力时，基线与带技能同轮启动）→ **先把 eval viewer 交给用户看，再自己动手改** → 迭代到满意 → 优化 description 触发率 → 交付。有 TodoList 就记进去。
 
-本 Skill 基于 Anthropic 官方 `skill-creator` 中文化改造，适配豆包工作 / WorkBuddy / 千问办公 / Codex / Claude / OpenClaw。祝顺利！
+本 Skill 基于 Anthropic 官方 `skill-creator` 中文化改造（Apache-2.0，完整条款与署名见 LICENSE.txt），适配豆包工作 / WorkBuddy / 千问办公 / Codex / Claude / OpenClaw。祝顺利！

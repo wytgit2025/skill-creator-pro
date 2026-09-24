@@ -17,6 +17,15 @@ from scripts.llm_client import build_client_from_args, add_common_args
 from scripts.platform_detect import detect_platform
 
 
+def _escape_xml_tags(text: str) -> str:
+    """转义文本中可能破坏 prompt XML 标签结构的字符。
+
+    把 < 和 > 转义成 HTML 实体，防止 skill_content 里
+    恰好包含 <scores_summary> 或 <new_description> 等标签。
+    """
+    return text.replace("<", "&lt;").replace(">", "&gt;")
+
+
 def improve_description(
     skill_name: str,
     skill_content: str,
@@ -42,7 +51,12 @@ def improve_description(
     train_score = f"{eval_results['summary']['passed']}/{eval_results['summary']['total']}"
     scores_summary = f"当前得分: {train_score}"
 
-    prompt = f"""你正在优化一个名为 "{skill_name}" 的技能的描述。
+    # 对可能包含 XML 标签的变量做转义，防止破坏 prompt 结构
+    safe_skill_name = _escape_xml_tags(skill_name)
+    safe_current_desc = _escape_xml_tags(current_description)
+    safe_skill_content = _escape_xml_tags(skill_content)
+
+    prompt = f"""你正在优化一个名为 "{safe_skill_name}" 的技能的描述。
 
 技能是什么？技能就像一个带渐进式加载的提示词——有一个标题和描述，模型在决定要不要使用这个技能时会看到它们；如果决定用了，才会去读 SKILL.md 文件里的详细内容，以及技能文件夹里的其他辅助文件和脚本。
 
@@ -50,7 +64,7 @@ def improve_description(
 
 当前描述：
 <current_description>
-"{current_description}"
+"{safe_current_desc}"
 </current_description>
 
 当前得分 ({scores_summary})：
@@ -73,8 +87,9 @@ def improve_description(
         for h in history:
             train_s = f"{h.get('train_passed', h.get('passed', 0))}/{h.get('train_total', h.get('total', 0))}"
             score_str = f"得分={train_s}"
+            safe_desc = _escape_xml_tags(h["description"])
             prompt += f'<attempt {score_str}>\n'
-            prompt += f'描述: "{h["description"]}"\n'
+            prompt += f'描述: "{safe_desc}"\n'
             if "results" in h:
                 prompt += "训练集结果:\n"
                 for r in h["results"]:
@@ -86,7 +101,7 @@ def improve_description(
 
 技能内容（供参考，了解这个技能是做什么的）：
 <skill_content>
-{skill_content}
+{safe_skill_content}
 </skill_content>
 
 根据这些失败案例，写一个新的、改进的描述，让触发更准确。注意——不要过拟合到眼前这几个具体案例上，要从失败中提炼出更宽泛的用户意图类别，说明这个技能在哪些场景下有用、哪些场景下没用。原因有两个：
@@ -107,16 +122,13 @@ def improve_description(
 请只输出新的描述文本，用 <new_description> 标签包起来，不要别的内容。"""
 
     # 构建客户端（自动检测平台）
-    class FakeArgs:
-        api_key = None
-        base_url = None
-
-    # 类体里写 `model = model` 会 NameError——类体读不到外层函数作用域，只能在定义之后赋值
-    FakeArgs.model = model
-    FakeArgs.allow_auto_approve = allow_auto_approve
-    FakeArgs.allow_nested_claude = allow_nested_claude
-
-    client = build_client_from_args(FakeArgs())
+    from scripts.llm_client import ClientConfig
+    config = ClientConfig(
+        model=model,
+        allow_auto_approve=allow_auto_approve,
+        allow_nested_claude=allow_nested_claude,
+    )
+    client = build_client_from_args(config)
     text = client.chat_text([{"role": "user", "content": prompt}], temperature=0.7, max_tokens=1024)
 
     match = re.search(r"<new_description>(.*?)</new_description>", text, re.DOTALL)
