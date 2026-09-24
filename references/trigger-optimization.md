@@ -41,6 +41,14 @@ SKILL.md 前置元数据里的 `description` 字段，是决定模型会不会�
 
 关键是：别把不应该触发的查询做得太明显不相关。比如对一个 PDF 技能来说，"写个斐波那契函数"这种负面测试太简单了——什么都测不出来。负面案例得是真的有迷惑性的。
 
+**例外：待测的就是本技能（skill-creator-pro）自己时，不必现造。** 仓库自带 `evals/trigger_eval.json`——20 条查询、10 正 10 负，格式就是上面这种，直接跳到第二步：
+
+```bash
+python3 -m scripts.gen_eval_review evals/trigger_eval.json --skill-path . -o /tmp/eval_review_skill_creator_pro.html
+```
+
+（在技能创建器根目录下执行，`--skill-path .` 读的就是本技能自己的 SKILL.md。）改完 description 要再测一轮，仍用这同一份，多轮分数才可比。测别的技能时，还是按上面现造 20 条。
+
 ---
 
 ## 第二步：和用户一起确认
