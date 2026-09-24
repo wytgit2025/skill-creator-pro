@@ -9,7 +9,7 @@ metadata:
 
 # 技能创建器（Skill Creator）
 
-一个用于创建新技能并迭代优化的通用指南，适配五种主流 AI 办公环境。本指南以**操作手册**的标准编写——每一步该执行什么命令、什么时机做什么、字段名必须怎么写、哪些坑要避开，都有明确说明。
+一个用于创建新技能并迭代优化的通用指南，适配六种主流 AI 办公环境。本指南以**操作手册**的标准编写——每一步该执行什么命令、什么时机做什么、字段名必须怎么写、哪些坑要避开，都有明确说明。
 
 **核心原则：简洁至上。** 每写一段都问——这个 AI 真的不知道吗？知道的别写，只补充它不知道的。
 
@@ -22,11 +22,11 @@ metadata:
 | 环境 | 识别特征 | 测试模式 | 优化模式 |
 |------|---------|---------|---------|
 | **豆包工作** | 有 OrganizerAgent 子任务能力，工作目录在 `.sessions/` 下，有 `present_files` | 主 Agent 自测 + 子任务并行 | 对话内手动，或调 run_loop.py |
-| **腾讯 WorkBuddy** | 有 `workbuddy`/`codebuddy` CLI，或本地 8080 端口 daemon API，frontmatter 带 `agent_created` | CLI 跑测试 + 本地 API | CLI 或通用 API 自动迭代 |
+| **腾讯 WorkBuddy** | 有 `workbuddy`/`codebuddy` CLI，frontmatter 带 `agent_created` | CLI 跑测试 | CLI 或通用 API 自动迭代 |
 | **千问办公** | 有 `~/.qwenworkcn/skills/` 目录，钉钉内可唤起，有 Skill 广场 / 专家套件 | 主 Agent 自测（多智能体并行未验证） | 对话内手动 |
-| **OpenAI Codex** | 有 `codex` CLI，用 `AGENTS.md` 配置 | spawn 子进程跑测试 | 调 Codex CLI 自动迭代 |
+| **OpenAI Codex** | 有 `codex` CLI，技能在 `.agents/skills/`，`AGENTS.md` 管指令 | 调 `codex exec` 跑测试 | 调 Codex CLI 自动迭代 |
 | **Claude** | 有 `claude` CLI，看到 `available_skills` 系统提示 | spawn 子进程跑测试 | 调 `claude -p` + run_loop.py |
-| **OpenClaw** | `claw` CLI，有 ClawHub，模型无关，多消息平台接入 | 通用 API + 子代理并行 | 通用 API 优化循环 |
+| **OpenClaw** | `openclaw` CLI，有 ClawHub，模型无关，多消息平台接入 | 通用 API + 子代理并行 | 通用 API 优化循环 |
 
 都不确定就默认通用 API 模式。SKILL.md 已是跨厂商事实标准。
 
@@ -41,7 +41,7 @@ metadata:
 
 ### 默认落地位置
 
-用本 Skill 创建的新技能，落在**当前环境已确认有效**的 Skill 发现路径下（豆包工作是 `.user_skills/`，Claude 是 `.claude/skills/`，千问办公是 `~/.qwenworkcn/skills/`，Codex 是项目根或 `~/.codex/`，OpenClaw 是 `~/.claw/skills/`，WorkBuddy 是 SkillHub 对应本地目录）。优先从当前已知的 Skill 路径反推，不要图省事退回到工作目录；用户没明确指定就不要乱换位置。
+用本 Skill 创建的新技能，落在**当前环境已确认有效**的 Skill 发现路径下（豆包工作是 `.user_skills/`，Claude 是 `.claude/skills/`，千问办公是 `~/.qwenworkcn/skills/`，Codex 是 `.agents/skills/` 或 `~/.agents/skills/`，OpenClaw 是工作区 `skills/` 或 `~/.agents/skills/`，WorkBuddy 是 SkillHub 对应本地目录）。优先从当前已知的 Skill 路径反推，不要图省事退回到工作目录；用户没明确指定就不要乱换位置。
 
 ### 网页采集类技能默认走浏览器
 
@@ -496,7 +496,7 @@ python -m scripts.package_skill <技能文件夹路径>
 - `references/schemas.md` — evals/grading/benchmark 的 JSON 结构
 - `references/trigger-optimization.md` — description 触发率优化方法与环境前提
 - `references/workflows.md` / `references/output-patterns.md` — 流程组织与模板写法
-- `references/platforms/` — 五个运行环境的跑测/优化/交付细节
+- `references/platforms/` — 六个运行环境的跑测/优化/交付细节
 - `references/skill-collections.md` — 多个相关技能怎么打包成集合
 - `references/chinese-context.md` — 中文写作各文体区别 + 国内合规底线
 
@@ -506,4 +506,4 @@ python -m scripts.package_skill <技能文件夹路径>
 
 识别环境 → 判断轻量/重量 → 搞清楚技能做什么 → 写初稿 → 跑测试（重量技能才带基线同轮启动）→ **先把 eval viewer 交给用户看，再自己动手改** → 迭代到满意 → 优化 description 触发率 → 交付。有 TodoList 就记进去。
 
-本 Skill 基于 Anthropic 官方 `skill-creator` 中文化改造，适配豆包工作 / WorkBuddy / Codex / Claude / OpenClaw。祝顺利！
+本 Skill 基于 Anthropic 官方 `skill-creator` 中文化改造，适配豆包工作 / WorkBuddy / 千问办公 / Codex / Claude / OpenClaw。祝顺利！

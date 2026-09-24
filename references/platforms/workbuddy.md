@@ -64,8 +64,8 @@ author: enterprise-admin
 
 ## 跑测试
 - 有 CLI 的话，用 `workbuddy run --skill ./my-skill "测试提示词"` 来跑
-- 没有 CLI 的话，用本地 daemon API（`http://localhost:8080/api/v1/...`）
 - 结果输出到 workspace 目录
+- **本地 daemon API 没接进来**：产品在 `http://localhost:8080/api/v1/...` 有本地服务，但`scripts/` 里没有任何代码用它（`platform_detect.py` 也不探这个端口），别按"没 CLI 也能跑"来规划。要做的话得先拿到接口文档，否则容易盲写。
 
 ## 优化描述
 - 用 `scripts/run_loop.py` 自动跑优化循环

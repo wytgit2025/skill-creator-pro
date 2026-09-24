@@ -6,7 +6,7 @@
 - claude: Claude Code / Cowork（有 claude CLI）
 - codex: OpenAI Codex（有 codex CLI）
 - workbuddy: 腾讯 WorkBuddy / CodeBuddy（有 workbuddy / codebuddy CLI）
-- openclaw: OpenClaw 开源框架（有 claw CLI）
+- openclaw: OpenClaw 开源框架（有 openclaw CLI）
 - doubao: 豆包工作（.sessions/ 工作目录）
 - qwenwork: 千问办公（只有弱信号，见 detect_platform 里的说明）
 - generic: 通用 API 模式（以上都不是）
@@ -52,7 +52,9 @@ def detect_platform() -> str:
         return "codex"
     if shutil.which("workbuddy") or shutil.which("codebuddy"):
         return "workbuddy"
-    if shutil.which("claw"):
+    # 官方二进制就叫 openclaw（`openclaw skills` / `openclaw agent exec`）。
+    # 早期这里写的是 which("claw")，跟客户端实际调的 openclaw 不一致——已核对官方 CLI 文档改正。
+    if shutil.which("openclaw"):
         return "openclaw"
 
     # 5. 千问办公：只有弱信号（技能目录是它唯一有文档依据的本地痕迹）。
@@ -98,7 +100,7 @@ def get_platform_info() -> dict:
         },
         "openclaw": {
             "name": "OpenClaw",
-            "cli_command": "claw",
+            "cli_command": "openclaw",
             "has_native_eval": True,
             "description": "开源 OpenClaw Agent 框架，有 ClawHub 技能市场",
         },
