@@ -3,7 +3,7 @@
 技能快速校验脚本
 
 用法（在技能创建器根目录下执行）：
-    python -m scripts.quick_validate <技能目录>           # 只做语法/格式校验
+    python -m scripts.quick_validate <技能目录>           # 语法/格式层（含 scripts/*.py 语法）
     python -m scripts.quick_validate <技能目录> --deep    # 额外做内容层检查（行数、触发词、examples、evals）
 
 退出码：0 = 通过；1 = 硬错误；deep 模式下的 warning 不阻断。
@@ -12,6 +12,7 @@
 import sys
 import os
 import re
+import ast
 import json
 import yaml
 from pathlib import Path
@@ -19,6 +20,7 @@ from pathlib import Path
 # frontmatter 允许出现的键，分两类：
 # - Anthropic 标准：name（必填）、description（必填）、license、allowed-tools、metadata、compatibility
 # - 平台扩展：WorkBuddy 需要 version/category/platforms/agent_created；企业版/依赖声明需要 requires/install/os/emoji
+#             千问办公需要中英双语那套，见 references/platforms/qwenwork.md
 # 不要随便加新键——加之前确认是哪个平台要的。
 ALLOWED_PROPERTIES = {
     # Anthropic 标准
@@ -27,6 +29,9 @@ ALLOWED_PROPERTIES = {
     'version', 'category', 'platforms', 'agent_created',
     # WorkBuddy 依赖声明（可选）
     'requires', 'install', 'os', 'emoji',
+    # 千问办公（QwenWork）中英双语元数据
+    'name_en', 'name_zh', 'description_en', 'description_zh',
+    'argument-hint', 'argument-hint-en', 'argument-hint-zh', 'user-invocable',
 }
 
 # name 里禁止出现的保留词（Anthropic 规则）
@@ -130,6 +135,20 @@ def validate_skill(skill_path, deep=False):
             if required not in fm:
                 messages.append(('warning',
                     f"WorkBuddy 技能标了 agent_created: true，建议同时提供 {required} 字段"))
+
+    # 8. scripts/ 语法检查（不依赖 deep）：只解析、不执行。
+    #    语法错属于硬错误——交一个跑不起来的脚本没有意义。
+    #    运行期问题这里管不了：import 是否存在、逻辑对不对，得靠作者自己跑和 eval 闭环。
+    if (skill_path / 'scripts').is_dir():
+        for py_file in sorted((skill_path / 'scripts').rglob('*.py')):
+            rel = py_file.relative_to(skill_path / 'scripts')
+            try:
+                ast.parse(py_file.read_text(), filename=str(py_file))
+            except SyntaxError as e:
+                return False, [('error',
+                    f"scripts/{rel} 语法错误：第 {e.lineno} 行 {e.msg}")]
+            except UnicodeDecodeError:
+                return False, [('error', f"scripts/{rel} 不是 UTF-8 文本，读不了")]
 
     # ------ deep 模式：内容层检查 ------
     if deep:

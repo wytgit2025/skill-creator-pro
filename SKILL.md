@@ -477,7 +477,7 @@ python -m scripts.package_skill <技能文件夹路径>
 5. 跑两遍校验——先语法，再内容：
 
    ```bash
-   python -m scripts.quick_validate <技能文件夹路径>          # 语法层
+   python -m scripts.quick_validate <技能文件夹路径>          # 语法层：frontmatter + scripts/*.py 语法
    python -m scripts.quick_validate <技能文件夹路径> --deep   # 内容层：行数/触发词/examples/evals/嵌套引用
    ```
    deep 模式报的 warning 不阻断，但每条都要看一眼再决定要不要修。
