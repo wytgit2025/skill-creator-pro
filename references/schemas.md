@@ -322,8 +322,10 @@
   - `configuration`：配置目录名。查看器认这四种——`"with_skill"` / `"without_skill"`（新建技能）、`"new_skill"` / `"old_skill"`（优化已有技能），其中 `without_skill` 和 `old_skill` 会被标成基线；其他名字也能聚合，但页面不显示配置徽章
   - `run_number`：整数运行次数（1, 2, 3...）
   - `result`：嵌套对象，包含 `pass_rate`、`passed`、`failed`、`total`、`time_seconds`、`tokens`、`tool_calls`、`errors`
+    - `tokens` 没采到就是 `null`（没有 `timing.json` 时就是这种情况）——**别拿 `execution_metrics.output_chars` 顶替**，那是字符数不是 token 数，量纲不一样
 - `run_summary`：每个配置的统计汇总。**键的顺序有意义**——带技能的配置在前，基线在后，`delta` 是用前者减后者算出来的
   - `with_skill` / `without_skill`：各包含 `pass_rate`、`time_seconds`、`tokens` 对象，带 `mean` 和 `stddev` 字段
+    - `tokens` 一条真实数据都没有时整个是 `null`，评审页会把这一行隐藏；这时 `delta.tokens` 这个键也不出现（页面显示 `—`）
   - `delta`：差值字符串，比如 `"+0.50"`、`"+13.0"`、`"+1700"`
 - `notes`：分析代理的自由格式观察
 

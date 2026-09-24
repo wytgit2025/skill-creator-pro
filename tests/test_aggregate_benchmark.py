@@ -13,7 +13,8 @@
 - 多轮（旧写法，需保持兼容）：``<iteration>/<eval-*>/<config>/run-N/grading.json``
 
 断言的几条都是此前踩过的坑：run_summary 的配置顺序、delta 方向、
-runs[] 首条配置、eval_name 透出、runs_per_configuration、均值数值。
+runs[] 首条配置、eval_name 透出、runs_per_configuration、均值数值，
+以及"没有真实 token 数据时不能用 output_chars 顶替"（量纲错误）。
 """
 
 import json
@@ -27,8 +28,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 
-def write_grading(path: Path, passed: int, total: int, tokens: int, seconds: float) -> None:
-    """按 schemas.md 的字段名写一份 grading.json + 同目录 timing.json。"""
+def write_grading(path: Path, passed: int, total: int, tokens: int, seconds: float,
+                  with_timing: bool = True) -> None:
+    """按 schemas.md 的字段名写一份 grading.json，可选同目录 timing.json。
+
+    with_timing=False 用来复现"只有字符数、没有真实 token 数"的场景。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "expectations": [
@@ -40,6 +45,8 @@ def write_grading(path: Path, passed: int, total: int, tokens: int, seconds: flo
         "execution_metrics": {"total_tool_calls": 7, "errors_encountered": 0, "output_chars": 999},
         "user_notes_summary": {"uncertainties": ["数据可能过时"]},
     }, ensure_ascii=False))
+    if not with_timing:
+        return
     (path.parent / "timing.json").write_text(json.dumps(
         {"total_tokens": tokens, "duration_ms": int(seconds * 1000),
          "total_duration_seconds": seconds}))
@@ -126,6 +133,56 @@ class AggregateBenchmarkContractTest(unittest.TestCase):
         expected = round((6 / 7 + 5 / 7 + 7 / 7) / 3, 4)
         actual = self.bench["run_summary"]["with_skill"]["pass_rate"]["mean"]
         self.assertAlmostEqual(actual, expected, places=4)
+
+
+class TokensDimensionalTest(unittest.TestCase):
+    """没有真实 token 数据时 tokens 必须是 null——不能拿 output_chars 顶替。
+
+    复现场景：只有 grading.json（execution_metrics.output_chars = 999），
+    没有 timing.json。旧实现会把 999 当成 token 数写进 tokens，量纲是错的。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ws = Path(tempfile.mkdtemp(prefix="scp-tokens-test-"))
+        iteration = cls.ws / "iteration-1"
+        for config in ("with_skill", "without_skill"):
+            write_grading(iteration / f"用例-{config}" / config / "grading.json",
+                          passed=6, total=7, tokens=0, seconds=42.5, with_timing=False)
+        cls.proc = subprocess.run(
+            [sys.executable, "-m", "scripts.aggregate_benchmark", str(iteration)],
+            cwd=REPO, capture_output=True, text=True)
+        cls.bench_path = iteration / "benchmark.json"
+        cls.md_path = iteration / "benchmark.md"
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.ws, ignore_errors=True)
+
+    def setUp(self):
+        if self.proc.returncode != 0:
+            self.fail(f"聚合脚本退出码 {self.proc.returncode}\n"
+                      f"stdout:\n{self.proc.stdout}\nstderr:\n{self.proc.stderr}")
+        self.bench = json.loads(self.bench_path.read_text())
+
+    def test_run_tokens_is_null(self):
+        """runs[] 里不能出现 output_chars 那个 999。"""
+        values = [r["result"]["tokens"] for r in self.bench["runs"]]
+        self.assertTrue(all(v is None for v in values), f"tokens 被填了假数据：{values}")
+
+    def test_summary_tokens_is_null(self):
+        for config in ("with_skill", "without_skill"):
+            self.assertIsNone(self.bench["run_summary"][config]["tokens"],
+                              f"{config}.tokens 不该是个数字")
+
+    def test_delta_has_no_tokens_key(self):
+        """两边都没数据时 delta 不该给 token 差值。"""
+        self.assertNotIn("tokens", self.bench["run_summary"]["delta"],
+                         f"delta 里出现了凭空的 token 差值：{self.bench['run_summary']['delta']}")
+
+    def test_markdown_marks_tokens_as_unknown(self):
+        self.assertIn("| Tokens | — | — | — |", self.md_path.read_text(),
+                      "benchmark.md 的 Tokens 行没有标成 —")
 
 
 if __name__ == "__main__":

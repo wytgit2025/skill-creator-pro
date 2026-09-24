@@ -205,8 +205,10 @@ def load_run_results(benchmark_dir: Path) -> dict:
             # Extract metrics if available
             metrics = grading.get("execution_metrics", {})
             result["tool_calls"] = metrics.get("total_tool_calls", 0)
+            # 拿不到 token 数就留 None。execution_metrics.output_chars 是"字符数"不是 token 数，
+            # 拿它顶上去会让这个指标量纲错掉（中英文差好几倍），宁可缺数据也不报假数。
             if not result.get("tokens"):
-                result["tokens"] = metrics.get("output_chars", 0)
+                result["tokens"] = None
             result["errors"] = metrics.get("errors_encountered", 0)
 
             # Extract expectations — viewer requires fields: text, passed, evidence
@@ -246,18 +248,20 @@ def aggregate_results(results: dict) -> dict:
             run_summary[config] = {
                 "pass_rate": {"mean": 0.0, "stddev": 0.0, "min": 0.0, "max": 0.0},
                 "time_seconds": {"mean": 0.0, "stddev": 0.0, "min": 0.0, "max": 0.0},
-                "tokens": {"mean": 0, "stddev": 0, "min": 0, "max": 0}
+                "tokens": None
             }
             continue
 
         pass_rates = [r["pass_rate"] for r in runs]
         times = [r["time_seconds"] for r in runs]
-        tokens = [r.get("tokens", 0) for r in runs]
+        # 只统计真实采到的 token 数；一个都没有就给 None，让评审页把整行隐掉，
+        # 而不是显示一个假的 0（也避免 delta 拿两个不存在的数相减）
+        token_values = [r.get("tokens") for r in runs if r.get("tokens") is not None]
 
         run_summary[config] = {
             "pass_rate": calculate_stats(pass_rates),
             "time_seconds": calculate_stats(times),
-            "tokens": calculate_stats(tokens)
+            "tokens": calculate_stats(token_values) if token_values else None
         }
 
     # 前一个是带技能的版本，后一个是它的基线
@@ -270,13 +274,17 @@ def aggregate_results(results: dict) -> dict:
 
     delta_pass_rate = primary.get("pass_rate", {}).get("mean", 0) - baseline.get("pass_rate", {}).get("mean", 0)
     delta_time = primary.get("time_seconds", {}).get("mean", 0) - baseline.get("time_seconds", {}).get("mean", 0)
-    delta_tokens = primary.get("tokens", {}).get("mean", 0) - baseline.get("tokens", {}).get("mean", 0)
 
     run_summary["delta"] = {
         "pass_rate": f"{delta_pass_rate:+.2f}",
         "time_seconds": f"{delta_time:+.1f}",
-        "tokens": f"{delta_tokens:+.0f}"
     }
+    # 两边都有真实 token 数据才给差值，否则整个键不出现（评审页显示为 —）
+    primary_tokens = primary.get("tokens") or {}
+    baseline_tokens = baseline.get("tokens") or {}
+    if primary_tokens and baseline_tokens:
+        delta_tokens = primary_tokens.get("mean", 0) - baseline_tokens.get("mean", 0)
+        run_summary["delta"]["tokens"] = f"{delta_tokens:+.0f}"
 
     return run_summary
 
@@ -305,7 +313,7 @@ def generate_benchmark(benchmark_dir: Path, skill_name: str = "", skill_path: st
                     "failed": result["failed"],
                     "total": result["total"],
                     "time_seconds": result["time_seconds"],
-                    "tokens": result.get("tokens", 0),
+                    "tokens": result.get("tokens"),
                     "tool_calls": result.get("tool_calls", 0),
                     "errors": result.get("errors", 0)
                 },
@@ -385,10 +393,13 @@ def generate_markdown(benchmark: dict) -> str:
     b_time = b_summary.get("time_seconds", {})
     lines.append(f"| Time | {a_time.get('mean', 0):.1f}s ± {a_time.get('stddev', 0):.1f}s | {b_time.get('mean', 0):.1f}s ± {b_time.get('stddev', 0):.1f}s | {delta.get('time_seconds', '—')}s |")
 
-    # Format tokens
-    a_tokens = a_summary.get("tokens", {})
-    b_tokens = b_summary.get("tokens", {})
-    lines.append(f"| Tokens | {a_tokens.get('mean', 0):.0f} ± {a_tokens.get('stddev', 0):.0f} | {b_tokens.get('mean', 0):.0f} ± {b_tokens.get('stddev', 0):.0f} | {delta.get('tokens', '—')} |")
+    # Format tokens（没采到真实 token 数时整行标 —，不编数字）
+    a_tokens = a_summary.get("tokens") or {}
+    b_tokens = b_summary.get("tokens") or {}
+    if a_tokens or b_tokens:
+        lines.append(f"| Tokens | {a_tokens.get('mean', 0):.0f} ± {a_tokens.get('stddev', 0):.0f} | {b_tokens.get('mean', 0):.0f} ± {b_tokens.get('stddev', 0):.0f} | {delta.get('tokens', '—')} |")
+    else:
+        lines.append("| Tokens | — | — | — |")
 
     # Notes section
     if benchmark.get("notes"):
