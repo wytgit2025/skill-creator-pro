@@ -120,9 +120,7 @@ metadata:
 python3 -m scripts.init_skill <skill-name> --path <已确认的 .user_skills 目录>
 ```
 
-> **脚本调用方式**：本 Skill 的脚本是一个 Python 包，统一用 `python3 -m scripts.<脚本名>` 调用，**工作目录必须是技能创建器根目录**。直接写 `python scripts/xxx.py` 会因为包内导入失败报 `ModuleNotFoundError`。
-
-它会自动建出 `SKILL.md`（带 TODO 占位符和结构选择建议）以及 `scripts/`、`references/`、`assets/`、`evals/`、`examples/` 五个目录。生成后再按下面的内容填充。如果只是在已有技能上迭代，可以跳过这一步。
+**脚本统一用 `python3 -m scripts.<脚本名>` 调用，工作目录必须是技能创建器根目录**——直接写 `python scripts/xxx.py` 会因包内导入失败报 `ModuleNotFoundError`。它会自动建出 `SKILL.md`（带 TODO 占位符和结构选择建议）以及 `scripts/`、`references/`、`assets/`、`evals/`、`examples/` 五个目录。生成后再按下面的内容填充。如果只是在已有技能上迭代，可以跳过这一步。
 
 根据用户访谈的结果，填充以下内容：
 
