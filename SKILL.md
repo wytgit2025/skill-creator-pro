@@ -4,7 +4,7 @@ description: 创建新技能、修改和优化已有技能，并严格评估技�
 license: Apache-2.0，源自 Anthropic 官方 skill-creator（Copyright 2026 Anthropic, PBC）的中文化改造，完整条款与署名见 LICENSE.txt
 compatibility: 需要 Python 3；脚本校验与打包另需 PyYAML 和 requests。主干流程不绑定特定运行时，任何支持 Agent Skills 开放格式的工具均可用；触发率优化另需可编程调用的 agent 运行时，或对话内手动模式。
 metadata:
-  version: "2.1.0"
+  version: "2.2.0"
 ---
 
 # 技能创建器（Skill Creator）

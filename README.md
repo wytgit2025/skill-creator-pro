@@ -2,7 +2,7 @@
 
 > **把重复工作固化成可复用的 AI 技能——六平台适配、严谨测试闭环、触发率自动优化。**
 
-![Version](https://img.shields.io/badge/version-v2.1.0-blue)
+![Version](https://img.shields.io/badge/version-v2.2.0-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Platforms](https://img.shields.io/badge/platforms-6-orange)
 ![Status](https://img.shields.io/badge/status-production%20ready-brightgreen)
