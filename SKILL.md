@@ -1,13 +1,25 @@
 ---
 name: skill-creator-pro
-description: "创建新技能、修改和优化已有技能，并严格评估技能效果。当用户说'帮我做个技能''把这个流程固化下来''我的技能不触发''帮我测测这个技能好不好用''优化一下触发描述'，或想要从零创建技能、编辑现有技能、跑测试用例验证、做带技能vs不带技能的基准对比时使用。适配 Claude Code、OpenAI Codex、腾讯 WorkBuddy、豆包工作、千问办公、OpenClaw 等环境。"
+description: "创建、编辑、评测 Agent 技能，并做上线后巡检与迭代。仅在用户明确提到技能/SKILL.md/技能触发/技能评测，或要求把 agent 能力固化为可复用技能时触发。不用于通用 prompt 优化、代码测试、业务流程自动化。"
 license: Apache-2.0
 compatibility: 需要 Python 3；脚本校验与打包另需 PyYAML 和 requests。主干流程不绑定特定运行时，任何支持 Agent Skills 开放格式的工具均可用；触发率优化另需可编程调用的 agent 运行时，或对话内手动模式。
 metadata:
-  version: "2.2.0"
+  version: "3.1.0"
 ---
 
 # 技能创建器（Skill Creator）
+
+## 使命与边界（迭代不可改动）
+
+**使命**：帮用户从零造技能、改已有技能、验证技能效果，让技能在真实环境里触发准、可回归、不越界。
+
+**绝不做（任何迭代不得突破）**：
+- 不自动改 SKILL.md / scripts——所有修改只出建议，由用户点头才动手；
+- 不编造测试数据或 star/点赞数这类外部数字；
+- 不在没跑 quick_validate + evals 的情况下宣布"改好了"；
+- 不替用户决定技能方向，不把模糊需求硬塞成方案。
+
+**成功标准**：交付的技能在真实环境触发准、测试通过、用户用着不返工。
 
 开始工作时先告诉用户："我在用 Skill Creator Pro 处理这个任务。"
 
@@ -55,7 +67,7 @@ metadata:
 
 > 一条底线：**没有基线对比的"我改好了"不算证据。** 要么给出可比较的数据，要么明确说这是主观判断。
 
-高层流程：明确技能做什么 → 写初稿 → 设计测试提示词跑一遍 → 定性+定量评估 → 按反馈重写 → 重复到满意 → 扩大测试集。先判断用户在哪个阶段，直接切入；已有初稿就跳测试/迭代。用户明确说"随便写写"就简化，否则走完整流程。最后（顺序可灵活）再优化 description 触发率。
+高层流程：明确技能做什么 → 写初稿 → 设计测试提示词跑一遍 → 定性+定量评估 → 按反馈重写 → 重复到满意 → 扩大测试集。先判断用户在哪个阶段，直接切入；已有初稿就跳测试/迭代。用户明确说"随便写写"就简化，否则走完整流程。最后（顺序可灵活）再优化 description 触发率 → 打包交付。**交付不是终点：带 runtime 能力的技能交付后进入"运行期闭环"（见下文专章）——每次调用留痕、巡检失败/变慢/被批评、人工确认改进、门禁通过再部署，持续进化且防跑偏。**
 
 ## 与用户沟通的方式
 
@@ -80,7 +92,14 @@ metadata:
 
 ### 第一步：捕获意图
 
+**动手前先读自己的经验。** 开始一次新的造技能任务前，先读 `runtime/build-patterns/` 里状态为 `open` 的 pattern（没有就跳过）。如果当前任务类别命中某个 open pattern，在访谈环节主动问对应的问题——例如命中"网页采集类漏反爬/登录态"，就先问数据来源、登录态、反爬和合规，别等用户踩坑再补。这一步是本技能自身经验闭环的落点：经验要在事前用上，不是事后改文档。
+
 先搞清楚用户到底想要什么。如果当前对话里已经有一个用户想固化成技能的工作流（比如他说"把刚才这套流程做成个技能"），那先从对话历史里提取信息——用到了什么工具、步骤顺序、用户做了哪些纠正、观察到的输入输出格式。缺的信息再问用户，确认后再往下走。
+
+**识别"该造新技能"的信号。** 用户表述里出现"每周 / 每次 / 老是 / 又要 / 这个事我一直 / 以后都要"等重复词，且当前没有对应技能时：
+- **第一次出现**：先正常帮他把这次的事做完，不要停下反问；同时往 `runtime/candidates.md` 记一行（模式、日期、次数+1）。
+- **同一件事在 candidates.md 里累计 ≥2 次**：这次做完后顺口提一句"这事你已经做了 N 次了，要不要固化成技能？"用户说要，再走本流程；拒绝就标 `wontfix`，不再提。
+- 用户明确说"把这个做成技能 / 以后都自动跑"时，直接进 Loop A，不用等次数。
 
 需要明确的核心问题：
 
@@ -122,7 +141,7 @@ python3 -m scripts.init_skill <skill-name> --path <已确认的 .user_skills 目
 
 根据用户访谈的结果，填充以下内容：
 
-- **name**：技能标识符（kebab-case，小写字母 + 数字 + 连字符）。官方推荐**动名词形式**（`processing-pdfs`、`analyzing-spreadsheets`、`testing-code`），一眼能看出这个技能在做什么动作；避免 `helper`、`utils`、`tools` 这种模糊名。
+- **name**：技能标识符（kebab-case，小写字母 + 数字 + 连字符）。官方推荐**动名词形式**（`processing-pdfs`、`analyzing-spreadsheets`、`testing-code`），一眼能看出这个技能在做什么动作；避免 `helper`、`utils`、`tools` 这种模糊名。**包装外部工具 / 平台的技能，按工具加命名空间前缀**——`gh-address-comments`、`linear-address-issue`、`dingtalk-send-message`、`wecom-broadcast`。多技能共存时这能避免撞名，前缀本身也是强触发信号（用户说"帮我处理下 GitHub 评论"时，`gh-` 就该命中）。
 - **description**：什么时候触发、做什么。这是最主要的触发机制——既要写清楚技能做什么，也要写清楚具体在什么场景下用。所有"什么时候用"的信息都放这里，不要放到正文里。
   - **必须用引号包起来**（`description: "..."`）——否则里面有英文冒号会导致 YAML 解析失败。
   - 大模型通常"触发不足"——description 可以写得稍微"主动"一点。
@@ -155,17 +174,17 @@ python3 -m scripts.init_skill <skill-name> --path <已确认的 .user_skills 目
 └── examples/   - 具体的 input/output 对（不是抽象描述）
 ```
 
-#### 确定性操作必须脚本化（事前硬门槛）
+#### 哪些代码贴正文、哪些打包成脚本（事前判断）
 
-写 SKILL.md **之前**，先列一张清单：这个技能里哪些动作是每次都要重复做、输入输出确定、不需要模型临场判断的？
+写 SKILL.md **之前**，先列一张清单：这个技能里哪些动作是重复的、输入输出确定的、不需要模型临场判断的？然后按**代码体量和容错要求**分两档，别一刀切：
 
-- 文件格式转换、表格解析、PDF 填表、批量重命名、数据清洗、调固定 API 拿结构化结果——**这些必须写成 `scripts/` 下的脚本**，SKILL.md 只负责告诉模型"遇到 X 就跑 scripts/xxx.py"。
-- 顶级技能（pdf/docx/xlsx）真正省 token、保稳定的原因就在这：模型不重复写代码，只做决策。
-- 反过来，如果某个动作每次都需要模型根据上下文自由发挥（比如判断文风、写文案、做产品判断），那就不要脚本化，写进正文。
+- **短而高频的代码 → 直接贴正文当示例。** 十几行、标准库/常用库用法、模型一眼能看懂、照着改改就能跑的（比如用 pypdf 合并 PDF、用 pdfplumber 抽表格、一段 pandas 清洗），直接贴 Python/bash 代码块进 SKILL.md。官方 pdf 技能就是这么干的——它的正文里全是这种可复制片段，模型每次省掉重新查 API。这种代码贴正文比塞进 scripts/ 更好用：模型不用多一次读文件、跑脚本、看输出的往返。
+- **长而脆、结果必须一致的逻辑 → 才打包进 `scripts/`。** 几百行以上、依赖特殊环境、边界情况多、每次结果必须字节级一致（PDF 表单填写、xlsx  schema 校验、批量文件重命名、调固定 API 拿结构化结果），写成脚本，SKILL.md 只负责说"遇到 X 就跑 scripts/xxx.py"。顶级 docx/xlsx 技能真正省 token、保稳定的地方就在这：复杂逻辑只实现一次，模型不重复写、也写不出岔子。
+- **需要上下文判断的（文风、写文案、产品判断）→ 不写代码**，写进正文讲清楚判断原则。
 
-这条是**事前要求**，不是事后优化——别等测试跑出来发现三个用例各自写了一份差不多的 `create_docx.py` 才想起来打包。
+判断口诀：**"模型照着改改就能用"的贴正文；"模型每次都得重新想还容易写错"的进 scripts/。** 拿不准就先贴正文，跑测试时如果发现好几个用例各自写了一份差不多的 `create_docx.py`、或输出开始飘，那就是该打包的信号——再把那段抽进 scripts/，别一开始就过度工程化。
 
-**脚本写好后，正文里贴一个调用样例**——官方 xlsx 技能就在 CAPABILITIES 段贴了 `createSpreadsheet({...})` 的完整调用。模型看一眼就知道参数怎么传，不用去翻脚本源码。
+**打包成脚本后，正文里贴一个调用样例**——官方 xlsx 技能就在 CAPABILITIES 段贴了 `createSpreadsheet({...})` 的完整调用。模型看一眼就知道参数怎么传，不用去翻脚本源码。
 
 **领域知识要拆到多细？** 别写 5 条概括就交差。高星技能：①**枚举所有情况**——不是"处理 CSV"，是"CSV 有 UTF-8/GBK/BOM 三种编码、逗号/分号/Tab 三种分隔符，分别怎么处理"；不是"写 PR"，是"PR 有 bugfix/feature/docs/refactor/chore 五种模板"。②每种情况带 before/after，放 `references/patterns.md`，正文只放最常用的 10 条。③**机械判断写脚本**——编码检测、类型判断、正则匹配写进 `scripts/` 自动跑，模型只做需要上下文判断的部分。
 
@@ -342,6 +361,7 @@ python3 -m scripts.package_skill <技能文件夹路径>
    python3 -m scripts.quick_validate <技能文件夹路径> --deep   # 内容层：行数/触发词/examples/evals/嵌套引用
    ```
    deep 模式报的 warning 不阻断，但每条都要看一眼再决定要不要修。
+6. **沉淀教训**：交付前先扫一眼 [references/lessons-learned.md](references/lessons-learned.md) 里已有的坑，别重复踩；这次真踩出新坑、且以后造技能用得上，就补一条——写"下次怎么做"，不写流水账。
 
 **更新已有技能时注意：**
 - **保留原始名称**——目录名和 frontmatter 里的 `name` 不要改（`research-helper.skill`，不要叫 `research-helper-v2.skill`）。
@@ -350,9 +370,45 @@ python3 -m scripts.package_skill <技能文件夹路径>
 
 ---
 
+## 运行期闭环（上线后 · Loop B）
+
+技能交付后，产品、平台、问法一直在变；静态技能会停在第一天、让用户反复踩同一个坑。对**变化快、长期多人用**的技能，启用运行期闭环：
+
+**调用技能 → ①留痕（`runtime/trace.jsonl`）→ ②巡检聚合信号（失败 / 变慢 / 被批评）→ ③只挑跨请求的普遍问题、提建议【用户确认】→ ④改 + 回归门禁 → 再部署**
+
+- 完整流程、阈值、巡检节奏、门禁、**防跑偏（使命锚点 / 冻结金标准集 / 多维否决 / 熔断 / 回滚 / 方向回顾）**与隐私留存：**先读 [references/runtime-loop.md](references/runtime-loop.md)**。
+- 用 init 建技能时，`--capabilities` 加 `runtime` 即自动生成 `runtime/` 并注入留痕 / 巡检脚本；老技能可按该文档"加装（retrofit）"。
+- **分型，不一刀切**：纯确定性、单一用途、几乎不变的小技能不需要运行期闭环。
+- 铁律：自动化只到"出信号 / 建议"；**改 SKILL.md 与部署必须用户确认，回归不退化才放行。**
+
+### 本技能自己的留痕（pro 已启用 runtime）
+
+每次用完本技能（成功或失败都算），在结束前跑一次留痕：
+
+```bash
+python3 scripts/runtime_log.py --skill-root . \
+  --status success|failure \
+  --input-summary "脱敏截断的输入摘要" \
+  --output-summary "脱敏截断的输出摘要" \
+  --duration-seconds 12.3
+```
+
+写不进只打警告，别管，绝不反过来把主任务跑崩。用户说"看看最近情况"、或隔一段固定时间，跑巡检：
+
+```bash
+python3 scripts/scan_signals.py --skill-root . --window-days 7 --out runtime/signals.md
+```
+
+把 signals.md 摆给用户看，**改不改、改哪条，用户说了算**——本技能不会自己动 SKILL.md。回归门禁：改任何东西后，跑 `quick_validate --deep`，并把 `evals/golden.json` 的用例过一遍，不退化才放行。
+
+**关于触发率测量的诚实定位**：`evals/golden.json` 是冒烟下限，不是精确触发率测量——它只回答"改完 description 后，该触发的还触发、不该触发的没乱触发"，不打分、不算率。函数调用模拟和人工裁判都只是辅助，`diagnostics.discriminative=false` 时模拟结果直接忽略，不据此改 description。真实触发率以 trace 在真实分布上的积累为准，不建假基线分数。
+
+---
+
 ## 参考文件
 
 按需读取，不要全背：
+- `references/runtime-loop.md` — 运行期闭环：留痕 / 巡检 / 门禁 / 防漂移 / 隐私（上线后必读）
 - `references/testing-workflow.md` — 完整测试执行流程（并行 spawn、基线对比、打分聚合、评审页面）
 - `agents/grader.md` — 对照断言打分；`agents/comparator.md` — 盲测 A/B；`agents/analyzer.md` — 为什么一版更好；`agents/flow-auditor.md` — 审这一轮流程有没有被跳步
 - `references/schemas.md` — evals/grading/benchmark 的 JSON 结构
@@ -361,11 +417,12 @@ python3 -m scripts.package_skill <技能文件夹路径>
 - `references/platforms/` — 六个运行环境的跑测/优化/交付细节
 - `references/skill-collections.md` — 多个相关技能怎么打包成集合
 - `references/chinese-context.md` — 中文写作各文体区别 + 国内合规底线
+- `references/lessons-learned.md` — 造技能踩过的坑（交付后必读，并补新坑）
 
 ---
 
 ## 核心循环（别漏）
 
-识别环境 → 判断能力模块（scripts / evals / 平台字段）→ 搞清楚技能做什么 → 写初稿 → 跑测试（有并行子任务能力时，基线与带技能同轮启动）→ **先把 eval viewer 交给用户看，再自己动手改** → 迭代到满意 → 优化 description 触发率 → 交付。有 TodoList 就记进去。
+识别环境 → 判断能力模块（scripts / evals / runtime / 平台字段）→ 搞清楚技能做什么 → 写初稿 → 跑测试（有并行子任务能力时，基线与带技能同轮启动）→ **先把 eval viewer 交给用户看，再自己动手改** → 迭代到满意 → 优化 description 触发率 → 交付 → **（带 runtime 的技能）进入运行期闭环：留痕 → 巡检 → 用户确认 → 门禁 → 再部署，循环且防跑偏**。有 TodoList 就记进去。
 
 本 Skill 基于 Anthropic 官方 `skill-creator` 中文化改造（Apache-2.0，完整条款与署名见 LICENSE.txt），适配豆包工作 / WorkBuddy / 千问办公 / Codex / Claude / OpenClaw。祝顺利！
